@@ -105,14 +105,18 @@ public enum ValueList {
 
     /// The values in a file, one per line.
     ///
-    /// Blank lines and `#` comments are skipped but still counted, so the
-    /// number reported is the number in the file. Splitting them away makes
-    /// every reference after the first gap wrong, which is worse than giving
-    /// no line at all.
+    /// Blank lines and comments are skipped but still counted, so the number
+    /// reported is the number in the file. Splitting them away makes every
+    /// reference after the first gap wrong, which is worse than giving no line
+    /// at all.
     ///
     /// Surrounding quotes are stripped, because that is how a spreadsheet
     /// writes a one-column export.
-    public static func read(_ url: URL) throws -> [Value] {
+    ///
+    /// - Parameter comment: The prefix that starts a comment, or `nil` for a
+    ///   list that has none. Hex colours begin with `#`, so a palette read
+    ///   with the default would come back empty.
+    public static func read(_ url: URL, comment: String? = "#") throws -> [Value] {
         let contents: String
         do {
             contents = try String(contentsOf: url, encoding: .utf8)
@@ -128,16 +132,17 @@ public enum ValueList {
                 let text = line
                     .trimmingCharacters(in: .whitespaces)
                     .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                guard !text.isEmpty, !text.hasPrefix("#") else { return nil }
+                guard !text.isEmpty else { return nil }
+                if let comment, text.hasPrefix(comment) { return nil }
                 return Value(text: text, source: "\(name):\(index + 1)")
             }
     }
 
     /// Everything in every file named, folders walked.
     public static func read(
-        paths: [String], recursive: Bool = false
+        paths: [String], recursive: Bool = false, comment: String? = "#"
     ) throws -> [Value] {
         try FileSet.gather(paths, matching: extensions, recursive: recursive)
-            .flatMap(read)
+            .flatMap { try read($0, comment: comment) }
     }
 }

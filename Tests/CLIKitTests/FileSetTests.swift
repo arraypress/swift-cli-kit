@@ -139,3 +139,24 @@ final class FileSetTests: XCTestCase {
         return url
     }
 }
+
+extension FileSetTests {
+
+    /// Hex colours begin with `#`, so a palette read with the default comment
+    /// prefix comes back empty — the marker has to be switchable.
+    func testAListWithNoCommentsKeepsHashLines() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cli-kit-palette-\(UUID().uuidString).txt")
+        try "#0f766e\nrgb(15,118,110)\n#ff0000".write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        XCTAssertEqual(
+            try ValueList.read(url).map(\.text), ["rgb(15,118,110)"],
+            "with the default, two colours are read as comments"
+        )
+        XCTAssertEqual(
+            try ValueList.read(url, comment: nil).map(\.text),
+            ["#0f766e", "rgb(15,118,110)", "#ff0000"]
+        )
+    }
+}
