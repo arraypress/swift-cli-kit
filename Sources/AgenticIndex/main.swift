@@ -115,9 +115,12 @@ func manifest(for tool: String) -> Manifest? {
     }
 
     // Read before waiting: a manifest larger than the pipe buffer would
-    // otherwise deadlock, and some of these run to tens of kilobytes.
+    // otherwise deadlock, and some of these run to tens of kilobytes. The
+    // stderr drain runs concurrently for the same reason — a chatty tool
+    // filling that pipe first would stall both reads.
+    let errHandle = err.fileHandleForReading
+    DispatchQueue.global().async { _ = errHandle.readDataToEndOfFile() }
     let data = out.fileHandleForReading.readDataToEndOfFile()
-    _ = err.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
 
     guard process.terminationStatus == 0 else {

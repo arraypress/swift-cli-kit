@@ -52,6 +52,14 @@ public enum CLIRunner {
             }
             exit(CLIExitCode.ok.rawValue)
         } catch {
+            // A CLIError thrown by a subcommand that is not a ``CLICommand``
+            // (auth, describe, mcp) would otherwise fall through to
+            // ArgumentParser's generic handler — struct dump, exit 1 — and
+            // break the exit-code contract those commands document.
+            if let cliError = error as? CLIError {
+                exit(Emitter.report(cliError).rawValue)
+            }
+
             // `--help` and `--version` arrive here as CleanExit and belong on
             // stdout with code 0; only genuine parse failures are remapped.
             if root.exitCode(for: error) == ExitCode.validationFailure {

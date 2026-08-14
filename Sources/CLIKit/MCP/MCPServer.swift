@@ -105,7 +105,7 @@ public struct MCPServer: Sendable {
 
             return [
                 "name": Self.toolName(tool: manifest.tool, path: command.path),
-                "description": Self.description(of: command, service: manifest.service),
+                "description": Self.description(of: command),
                 "inputSchema": Self.inputSchema(for: command),
             ]
         }
@@ -119,7 +119,7 @@ public struct MCPServer: Sendable {
     }
 
     /// The description an agent reads when choosing a tool.
-    static func description(of command: Manifest.Command, service: String) -> String {
+    static func description(of command: Manifest.Command) -> String {
         var text = command.summary ?? "Run `\(command.invocation)`."
         if let details = command.details {
             text += "\n\n" + details
@@ -220,19 +220,30 @@ public struct MCPServer: Sendable {
     ) throws -> [String] {
         var argv = command.path
 
-        // Positionals must precede options and keep their declared order.
+        // Positionals must precede options and keep their declared order. Once
+        // one is omitted argv has no way to express a later one — its value
+        // would bind to the earlier slot — so a gap must end the list.
+        var positionalGap: String?
         for argument in command.arguments where argument.kind == "positional" {
             let key = propertyName(for: argument)
             guard let value = arguments[key] else {
                 if argument.required {
                     throw CLIError.usage("Missing required argument '\(key)'")
                 }
+                positionalGap = key
                 continue
+            }
+            if let gap = positionalGap {
+                throw CLIError.usage("Argument '\(key)' also needs '\(gap)' — positionals cannot be skipped")
             }
             argv.append(stringify(value))
         }
 
-        for argument in command.arguments where argument.kind != "positional" {
+        // Format flags are hidden from the tool schema (the subprocess pipes
+        // stdout, so it already resolves to JSON); ignoring them here keeps the
+        // executor honest to what the schema advertises.
+        for argument in command.arguments
+        where argument.kind != "positional" && !Manifest.formatArguments.contains(argument.name) {
             let key = propertyName(for: argument)
             guard let value = arguments[key] else { continue }
 

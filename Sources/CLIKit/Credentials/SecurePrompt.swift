@@ -15,6 +15,23 @@ import Darwin
 import Glibc
 #endif
 
+/// Terminal state for ``promptSignalHandler`` to restore. A C signal handler
+/// cannot capture context, so this lives at file scope for the duration of the
+/// muted read; only ``SecurePrompt/readSecret(_:)`` sets it, and that never
+/// runs concurrently with itself.
+private nonisolated(unsafe) var promptRestoreState: (fd: Int32, state: termios)?
+
+/// Puts the terminal back before the process dies to a signal.
+///
+/// `tcsetattr` is async-signal-safe, so this is legal in a handler.
+private func promptSignalHandler(_ signalNumber: Int32) {
+    if var restore = promptRestoreState {
+        tcsetattr(restore.fd, TCSAFLUSH, &restore.state)
+    }
+    signal(signalNumber, SIG_DFL)
+    raise(signalNumber)
+}
+
 /// Reads secrets from standard input without echoing them.
 ///
 /// Secrets are never accepted as command-line arguments. An argument is visible
@@ -53,7 +70,19 @@ public enum SecurePrompt {
         muted.c_lflag &= ~tcflag_t(ECHO)
         tcsetattr(FileHandle.standardInput.fileDescriptor, TCSAFLUSH, &muted)
 
+        // An interrupt inside the read would kill the process with echo still
+        // off, leaving the parent shell typing invisibly until `stty sane`.
+        // Restore the terminal first, then let the default disposition end the
+        // process.
+        promptRestoreState = (FileHandle.standardInput.fileDescriptor, original)
+        let previousInt = signal(SIGINT, promptSignalHandler)
+        let previousTerm = signal(SIGTERM, promptSignalHandler)
+
         let value = readLine(strippingNewline: true)
+
+        signal(SIGINT, previousInt)
+        signal(SIGTERM, previousTerm)
+        promptRestoreState = nil
 
         tcsetattr(FileHandle.standardInput.fileDescriptor, TCSAFLUSH, &original)
         // The user's newline was swallowed along with the echo.

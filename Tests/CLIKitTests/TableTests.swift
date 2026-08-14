@@ -149,13 +149,6 @@ final class TableTests: XCTestCase {
         XCTAssertEqual(table(#"[{"a":1}]"#).render(as: .json), "")
     }
 
-    func testTabularFormatsAreFlagged() {
-        XCTAssertTrue(OutputFormat.csv.isTabular)
-        XCTAssertTrue(OutputFormat.markdown.isTabular)
-        XCTAssertFalse(OutputFormat.json.isTabular)
-        XCTAssertFalse(OutputFormat.text.isTabular)
-    }
-
     // MARK: - Rendering rows directly
 
     func testRenderColumnsAndRowsToCSV() {

@@ -142,10 +142,13 @@ public enum TextTable {
              0xFF00...0xFF60,      // Fullwidth forms
              0xFFE0...0xFFE6,
              0x1F300...0x1F64F,    // Emoji
+             0x1F680...0x1F6FF,    // Transport and map symbols (🚀 🚗 ✈)
              0x1F900...0x1F9FF,
              0x1FA70...0x1FAFF:
             return true
         default:
+            // Regional indicators are deliberately narrow: a flag is a *pair*
+            // of them rendered in 2 cells, so 1 + 1 lands on the right total.
             return false
         }
     }

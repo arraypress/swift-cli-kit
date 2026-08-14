@@ -96,9 +96,17 @@ public struct DiskCache: Sendable {
 
     private func entryURL(for key: String) -> URL {
         // The version is part of the digested key rather than a directory, so
-        // `cache clear` and the size report still see every generation.
+        // `cache clear` and the size report still see every generation. Stale
+        // generations are swept on the next write — see `purgeStaleGenerations`.
         directoryURL.appendingPathComponent(Self.digest("v\(version)\u{001F}\(key)"), isDirectory: false)
     }
+
+    /// The marker recording which tool version last wrote to this cache.
+    private var generationMarkerURL: URL {
+        directoryURL.appendingPathComponent(Self.generationMarkerName, isDirectory: false)
+    }
+
+    private static let generationMarkerName = "generation"
 
     // MARK: Reading
 
@@ -142,7 +150,29 @@ public struct DiskCache: Sendable {
             )
         }
 
+        purgeStaleGenerations(in: directory)
         try? data.write(to: entryURL(for: key), options: .atomic)
+    }
+
+    /// Deletes entries written by a different tool version.
+    ///
+    /// The version is part of every digested key, so another generation's
+    /// entries can never be read again — left alone they would accumulate
+    /// forever, one orphaned set per upgrade (or per rebuild, given the
+    /// mtime-based ``callerVersion`` fallback). A marker file records the
+    /// generation that last wrote, so the sweep only runs when it changes.
+    private func purgeStaleGenerations(in directory: URL) {
+        let current = Data("v\(version)\n".utf8)
+        if let existing = try? Data(contentsOf: generationMarkerURL), existing == current { return }
+
+        if let contents = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil
+        ) {
+            for url in contents where url.lastPathComponent != Self.generationMarkerName {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        try? current.write(to: generationMarkerURL, options: .atomic)
     }
 
     // MARK: Memoising
@@ -190,10 +220,11 @@ public struct DiskCache: Sendable {
 
     /// The number of entries and total bytes currently cached.
     public func usage() -> (entries: Int, bytes: Int) {
-        guard let contents = try? FileManager.default.contentsOfDirectory(
+        guard let listing = try? FileManager.default.contentsOfDirectory(
             at: directoryURL,
             includingPropertiesForKeys: [.fileSizeKey]
         ) else { return (0, 0) }
+        let contents = listing.filter { $0.lastPathComponent != Self.generationMarkerName }
 
         let bytes = contents.reduce(0) { total, url in
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0

@@ -68,6 +68,14 @@ public struct Emitter: Sendable {
         return encoder
     }
 
+    /// NDJSON is one record per line by definition, so it ignores `pretty` —
+    /// a multi-line record would break every consumer of the format.
+    private var lineEncoder: JSONEncoder {
+        let encoder = self.encoder
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return encoder
+    }
+
     // MARK: Emitting
 
     /// Writes a single result.
@@ -81,8 +89,11 @@ public struct Emitter: Sendable {
         case .csv, .markdown:
             let data = try encoder.encode(value)
             Terminal.write(Table(from: applyFieldFilter(to: data)).render(as: format))
-        case .json, .ndjson:
+        case .json:
             let data = try encoder.encode(value)
+            Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
+        case .ndjson:
+            let data = try lineEncoder.encode(value)
             Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
         }
     }
@@ -99,8 +110,6 @@ public struct Emitter: Sendable {
             let data = try encoder.encode(values)
             Terminal.write(Table(from: applyFieldFilter(to: data)).render(as: format))
         case .ndjson:
-            let lineEncoder = encoder
-            lineEncoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             for value in values {
                 let data = try lineEncoder.encode(value)
                 Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
@@ -142,8 +151,6 @@ public struct Emitter: Sendable {
             let data = try encoder.encode(values)
             Terminal.write(Table(from: applyFieldFilter(to: data)).render(as: format))
         case .ndjson:
-            let lineEncoder = encoder
-            lineEncoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
             for value in values {
                 let data = try lineEncoder.encode(value)
                 Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
@@ -188,7 +195,7 @@ public struct Emitter: Sendable {
         }
 
         var options: JSONSerialization.WritingOptions = [.sortedKeys, .withoutEscapingSlashes]
-        if pretty { options.insert(.prettyPrinted) }
+        if pretty, format != .ndjson { options.insert(.prettyPrinted) }
 
         let filtered = filter(parsed)
 

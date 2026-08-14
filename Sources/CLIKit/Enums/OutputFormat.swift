@@ -28,14 +28,6 @@ public enum OutputFormat: String, Sendable, CaseIterable {
     /// A GitHub-flavoured Markdown table.
     case markdown
 
-    /// Whether this format renders records as a table of scalar columns.
-    ///
-    /// Tabular formats cannot represent nesting, so nested values are
-    /// JSON-encoded into their cell rather than dropped.
-    var isTabular: Bool {
-        self == .csv || self == .markdown
-    }
-
     /// Picks a format, honouring an explicit choice and otherwise inferring one
     /// from whether stdout is a terminal.
     ///

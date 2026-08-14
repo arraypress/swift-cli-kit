@@ -144,12 +144,22 @@ public struct Table {
         return out
     }
 
-    /// Quotes a field when it contains a delimiter, quote, or line break.
+    /// Quotes a field when it contains a delimiter, quote, or line break, and
+    /// defuses formula injection.
     private static func csvField(_ value: String) -> String {
-        guard value.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n" || $0 == "\r" }) else {
-            return value
+        // A leading =, +, @, - or tab makes a spreadsheet *execute* the cell
+        // rather than display it, and these cells carry scraped web content by
+        // design. A leading apostrophe forces text mode; plain numbers are left
+        // alone so numeric columns keep importing as numbers.
+        var field = value
+        if let first = field.first, first == "=" || first == "+" || first == "@" || first == "-" || first == "\t",
+           Double(field) == nil {
+            field = "'" + field
         }
-        return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        guard field.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n" || $0 == "\r" }) else {
+            return field
+        }
+        return "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 
     /// A GitHub-flavoured Markdown table.

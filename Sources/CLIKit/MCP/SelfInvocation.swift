@@ -52,18 +52,31 @@ enum SelfInvocation {
             )
         }
 
-        // Read before waiting: a command producing more output than the pipe
-        // buffer holds would otherwise block forever on write while we block on
-        // exit.
+        // Read before waiting, and drain both pipes concurrently: a command
+        // producing more output than a pipe buffer holds would otherwise block
+        // forever on write while we block on exit — and a child that fills the
+        // stderr pipe before closing stdout would deadlock sequential reads the
+        // same way.
+        let errBuffer = DrainBuffer()
+        let errQueue = DispatchQueue(label: "cli-kit.self-invocation.stderr")
+        let errHandle = err.fileHandleForReading
+        errQueue.async { errBuffer.data = errHandle.readDataToEndOfFile() }
+
         let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        errQueue.sync {}
         process.waitUntilExit()
 
         return MCPServer.CommandResult(
             stdout: String(decoding: outData, as: UTF8.self),
-            stderr: String(decoding: errData, as: UTF8.self),
+            stderr: String(decoding: errBuffer.data, as: UTF8.self),
             exitCode: process.terminationStatus
         )
+    }
+
+    /// A byte buffer a background drain fills while this thread reads the other
+    /// pipe. The `sync {}` join orders the write before the read.
+    private final class DrainBuffer: @unchecked Sendable {
+        var data = Data()
     }
 
     /// Reads the command tree as ArgumentParser's dump-help JSON.
