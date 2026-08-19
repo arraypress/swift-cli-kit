@@ -20,10 +20,6 @@
 
 import Foundation
 
-#if canImport(Darwin)
-import Darwin
-#endif
-
 /// A single-line progress bar on standard error.
 ///
 /// ```swift
@@ -106,13 +102,15 @@ public final class ProgressBar: @unchecked Sendable {
     // MARK: Internals
 
     private func draw(percent: Int) {
-        let width = Self.terminalWidth()
+        let width = TextTable.width(of: FileHandle.standardError.fileDescriptor)
 
         // Reserve room for the label, the percentage and the brackets; the bar
         // takes what is left, and disappears entirely on a very narrow window
         // rather than wrapping onto a second line it cannot then erase.
+        // Measured in display cells, not characters: an emoji in the label
+        // occupies two, and counting it as one leaves a smear un-erased.
         let suffix = String(format: "%3d%%", percent)
-        let fixed = label.count + suffix.count + 4
+        let fixed = TextTable.displayWidth(label) + suffix.count + 4
         let barWidth = max(0, min(40, width - fixed))
 
         var line = label + " "
@@ -126,8 +124,9 @@ public final class ProgressBar: @unchecked Sendable {
         line += suffix
 
         // Pad to the previous width so a shorter line leaves no tail behind.
-        let padding = max(0, lastWidth - line.count)
-        lastWidth = line.count
+        let cells = TextTable.displayWidth(line)
+        let padding = max(0, lastWidth - cells)
+        lastWidth = cells
 
         FileHandle.standardError.write(Data(("\r" + line + String(repeating: " ", count: padding)).utf8))
     }
@@ -137,20 +136,6 @@ public final class ProgressBar: @unchecked Sendable {
         FileHandle.standardError.write(Data(("\r" + String(repeating: " ", count: lastWidth) + "\r").utf8))
         lastWidth = 0
         lastDrawn = -1
-    }
-
-    /// The terminal's column count, or a conservative default.
-    static func terminalWidth(fallback: Int = 80) -> Int {
-        #if canImport(Darwin)
-        var size = winsize()
-        if ioctl(FileHandle.standardError.fileDescriptor, UInt(TIOCGWINSZ), &size) == 0, size.ws_col > 0 {
-            return Int(size.ws_col)
-        }
-        #endif
-        if let columns = ProcessInfo.processInfo.environment["COLUMNS"], let value = Int(columns), value > 0 {
-            return value
-        }
-        return fallback
     }
 }
 

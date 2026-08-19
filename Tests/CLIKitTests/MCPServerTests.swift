@@ -58,6 +58,24 @@ final class MCPServerTests: XCTestCase {
                               repeating: false, summary: "A channel.", defaultValue: nil, values: nil)
                     ]
                 ),
+                Manifest.Command(
+                    path: ["batch"], invocation: "yt-fetch batch",
+                    summary: "Several at once.", details: nil,
+                    arguments: [
+                        .init(kind: "positional", name: "urls", short: nil, required: false,
+                              repeating: true, summary: "URLs.", defaultValue: nil, values: nil)
+                    ]
+                ),
+                // The protocol machinery is in the manifest — describe readers
+                // want the full tree — but must never be advertised as a tool.
+                Manifest.Command(
+                    path: ["describe"], invocation: "yt-fetch describe",
+                    summary: "The manifest.", details: nil, arguments: []
+                ),
+                Manifest.Command(
+                    path: ["mcp"], invocation: "yt-fetch mcp",
+                    summary: "This server.", details: nil, arguments: []
+                ),
             ]
         )
     }
@@ -92,6 +110,28 @@ final class MCPServerTests: XCTestCase {
         XCTAssertEqual(result["protocolVersion"] as? String, MCPServer.protocolVersion)
         XCTAssertNotNil((result["capabilities"] as? [String: Any])?["tools"])
         XCTAssertEqual((result["serverInfo"] as? [String: Any])?["name"] as? String, "yt-fetch")
+    }
+
+    func testInitializeEchoesASupportedClientVersion() throws {
+        // A strict client may drop the session when offered a revision it did
+        // not ask for; echoing one this server can honestly speak avoids that.
+        let (server, _) = self.server()
+        let reply = try XCTUnwrap(send(
+            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+            to: server
+        ))
+        let result = try XCTUnwrap(reply["result"] as? [String: Any])
+        XCTAssertEqual(result["protocolVersion"] as? String, "2025-06-18")
+    }
+
+    func testInitializeFallsBackForAnUnknownClientVersion() throws {
+        let (server, _) = self.server()
+        let reply = try XCTUnwrap(send(
+            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2030-01-01"}}"#,
+            to: server
+        ))
+        let result = try XCTUnwrap(reply["result"] as? [String: Any])
+        XCTAssertEqual(result["protocolVersion"] as? String, MCPServer.protocolVersion)
     }
 
     func testNotificationsGetNoReply() throws {
@@ -130,7 +170,28 @@ final class MCPServerTests: XCTestCase {
     func testRootCommandIsNotExposedAsATool() throws {
         // The root dispatches to subcommands and does nothing on its own.
         let (server, _) = self.server()
-        XCTAssertEqual(try tools(from: server).count, 2)
+        XCTAssertEqual(try tools(from: server).count, 3)
+    }
+
+    func testProtocolCommandsAreNotExposedAsTools() throws {
+        // An agent offered `yt-fetch_mcp` will eventually call it, and a
+        // server nested inside a server blocks on a stream that is already
+        // spoken for. `describe` is the manifest the client already has.
+        let (server, _) = self.server()
+        let names = try tools(from: server).compactMap { $0["name"] as? String }
+        XCTAssertFalse(names.contains("yt-fetch_mcp"))
+        XCTAssertFalse(names.contains("yt-fetch_describe"))
+    }
+
+    func testUnexposedCommandsCannotBeCalledEither() throws {
+        // tools/call must agree with tools/list, or a client that guesses the
+        // name still nests a server.
+        let (server, _) = self.server()
+        let reply = try XCTUnwrap(send(
+            #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"yt-fetch_mcp","arguments":{}}}"#,
+            to: server
+        ))
+        XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? Int, -32602)
     }
 
     func testToolNamesAreProtocolLegal() throws {
@@ -247,13 +308,47 @@ final class MCPServerTests: XCTestCase {
         XCTAssertFalse(recorder.argv.contains("--full"))
     }
 
-    func testRepeatingOptionPassesEveryValueAfterOneFlag() throws {
+    func testRepeatingOptionEmitsOneFlagPerValue() throws {
+        // ArgumentParser's default for an array option is `.singleValue`, so
+        // `--fields title url` binds only "title" and spills "url" into a
+        // positional slot. Repeated pairs parse the same under both parsing
+        // strategies.
         let recorder = Recorder()
         let (server, _) = self.server(recorder)
 
         _ = try call("yt-fetch_search", #"{"query":"x","fields":["title","url"]}"#, on: server)
         let index = try XCTUnwrap(recorder.argv.firstIndex(of: "--fields"))
-        XCTAssertEqual(Array(recorder.argv[index...]), ["--fields", "title", "url"])
+        XCTAssertEqual(Array(recorder.argv[index...]), ["--fields", "title", "--fields", "url"])
+    }
+
+    func testRepeatingPositionalFlattensItsElements() throws {
+        let recorder = Recorder()
+        let (server, _) = self.server(recorder)
+
+        _ = try call("yt-fetch_batch", #"{"urls":["one","two"]}"#, on: server)
+        XCTAssertEqual(recorder.argv, ["batch", "one", "two"])
+    }
+
+    func testNullOptionValuesAreTreatedAsOmitted() throws {
+        // JSON null is how an agent says "unset" — it must not become the
+        // literal string "<null>" on the command line.
+        let recorder = Recorder()
+        let (server, _) = self.server(recorder)
+
+        _ = try call("yt-fetch_search", #"{"query":"x","limit":null,"sort":null,"full":null}"#, on: server)
+        XCTAssertEqual(recorder.argv, ["search", "x"])
+    }
+
+    func testNullRequiredPositionalIsRejectedBeforeRunning() throws {
+        let recorder = Recorder()
+        let (server, _) = self.server(recorder)
+
+        let reply = try XCTUnwrap(send(
+            #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"yt-fetch_search","arguments":{"query":null}}}"#,
+            to: server
+        ))
+        XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? Int, -32602)
+        XCTAssertTrue(recorder.argv.isEmpty, "must not run the command")
     }
 
     func testEmptyRepeatingOptionIsOmitted() throws {

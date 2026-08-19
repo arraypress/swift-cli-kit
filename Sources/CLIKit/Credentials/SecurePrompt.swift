@@ -51,8 +51,10 @@ public enum SecurePrompt {
     public static func readSecret(_ prompt: String) -> String? {
         guard isatty(FileHandle.standardInput.fileDescriptor) == 1 else {
             // Not a terminal — there is no echo to suppress and no person to
-            // prompt. Read the pipe.
-            return readLine(strippingNewline: true)
+            // prompt. Read the pipe, trimmed exactly as `--stdin` trims: the
+            // two paths receive the same `echo "$KEY" |`, and a secret that
+            // works with one flag spelling and not the other is a bug report.
+            return trimmed(readLine(strippingNewline: true))
         }
 
         FileHandle.standardError.write(Data(prompt.utf8))
@@ -97,8 +99,15 @@ public enum SecurePrompt {
     /// trim matters because `echo "$KEY" | …` appends a newline that would
     /// otherwise be stored as part of the secret.
     public static func readPipedSecret() -> String? {
-        guard let line = readLine(strippingNewline: true) else { return nil }
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        guard let line = trimmed(readLine(strippingNewline: true)), !line.isEmpty else { return nil }
+        return line
+    }
+
+    /// Strips the whitespace a pipe smuggles in around a secret.
+    ///
+    /// `strippingNewline` removes only `\n`, so a CRLF file leaves a `\r` on
+    /// the value — invisible in every printout, fatal in every request header.
+    static func trimmed(_ line: String?) -> String? {
+        line?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

@@ -39,8 +39,26 @@ public struct MCPServer: Sendable {
     /// The command tree being exposed.
     public let manifest: Manifest
 
-    /// The MCP protocol revision this server speaks.
+    /// The MCP protocol revision this server speaks by default.
     public static let protocolVersion = "2024-11-05"
+
+    /// Revisions this server can honestly claim.
+    ///
+    /// Everything used here — initialize, ping, tools/list, tools/call over
+    /// newline-delimited stdio — is unchanged across these revisions, so the
+    /// client's own version is echoed when it names one of them. A strict
+    /// client may drop the session when offered a revision it did not ask
+    /// for, which is the failure this avoids.
+    static let protocolVersions: Set<String> = ["2024-11-05", "2025-03-26", "2025-06-18"]
+
+    /// Commands never exposed as MCP tools.
+    ///
+    /// They stay in the manifest — `describe` readers and agentic-index want
+    /// the full tree — but neither is callable over MCP: `describe` is the
+    /// manifest the client already has, and `mcp` would nest a second server
+    /// inside this one, blocking on a protocol stream that is already spoken
+    /// for.
+    static let unexposedCommands: Set<String> = ["mcp", "describe"]
 
     private let run: Runner
 
@@ -74,8 +92,16 @@ public struct MCPServer: Sendable {
 
         switch method {
         case "initialize":
+            // Echo the client's revision when it is one this server can
+            // honestly speak; otherwise answer with the default and let the
+            // client decide, as the specification prescribes.
+            let params = object["params"] as? [String: Any]
+            let requested = params?["protocolVersion"] as? String
+            let version = requested.flatMap { Self.protocolVersions.contains($0) ? $0 : nil }
+                ?? Self.protocolVersion
+
             return encode(result: [
-                "protocolVersion": Self.protocolVersion,
+                "protocolVersion": version,
                 "capabilities": ["tools": [String: Any]()],
                 "serverInfo": ["name": manifest.tool, "version": manifest.version],
             ], id: id)
@@ -97,13 +123,20 @@ public struct MCPServer: Sendable {
 
     // MARK: Tool Definitions
 
+    /// The commands offered as tools: every invocable command except the
+    /// protocol machinery itself.
+    private var exposedCommands: [Manifest.Command] {
+        manifest.commands.filter { command in
+            // The root command dispatches to subcommands and does nothing alone.
+            guard let first = command.path.first else { return false }
+            return !Self.unexposedCommands.contains(first)
+        }
+    }
+
     /// One MCP tool per invocable command.
     func toolDefinitions() -> [[String: Any]] {
-        manifest.commands.compactMap { command in
-            // The root command dispatches to subcommands and does nothing alone.
-            guard !command.path.isEmpty else { return nil }
-
-            return [
+        exposedCommands.map { command -> [String: Any] in
+            [
                 "name": Self.toolName(tool: manifest.tool, path: command.path),
                 "description": Self.description(of: command),
                 "inputSchema": Self.inputSchema(for: command),
@@ -181,8 +214,8 @@ public struct MCPServer: Sendable {
         guard let name = params["name"] as? String else {
             return encode(error: -32602, message: "Missing tool name", id: id)
         }
-        guard let command = manifest.commands.first(where: {
-            !$0.path.isEmpty && Self.toolName(tool: manifest.tool, path: $0.path) == name
+        guard let command = exposedCommands.first(where: {
+            Self.toolName(tool: manifest.tool, path: $0.path) == name
         }) else {
             return encode(error: -32602, message: "Unknown tool: \(name)", id: id)
         }
@@ -226,7 +259,9 @@ public struct MCPServer: Sendable {
         var positionalGap: String?
         for argument in command.arguments where argument.kind == "positional" {
             let key = propertyName(for: argument)
-            guard let value = arguments[key] else {
+            // JSON `null` is how an agent says "unset"; it must mean omitted,
+            // not the literal string "<null>" bound to the slot.
+            guard let value = arguments[key], !(value is NSNull) else {
                 if argument.required {
                     throw CLIError.usage("Missing required argument '\(key)'")
                 }
@@ -236,7 +271,14 @@ public struct MCPServer: Sendable {
             if let gap = positionalGap {
                 throw CLIError.usage("Argument '\(key)' also needs '\(gap)' — positionals cannot be skipped")
             }
-            argv.append(stringify(value))
+            // A repeating positional arrives as an array; each element is its
+            // own argv entry, or the whole array would be one description-
+            // formatted string.
+            if let list = value as? [Any] {
+                argv.append(contentsOf: list.filter { !($0 is NSNull) }.map(stringify))
+            } else {
+                argv.append(stringify(value))
+            }
         }
 
         // Format flags are hidden from the tool schema (the subprocess pipes
@@ -245,7 +287,7 @@ public struct MCPServer: Sendable {
         for argument in command.arguments
         where argument.kind != "positional" && !Manifest.formatArguments.contains(argument.name) {
             let key = propertyName(for: argument)
-            guard let value = arguments[key] else { continue }
+            guard let value = arguments[key], !(value is NSNull) else { continue }
 
             if argument.kind == "flag" {
                 // Only pass the flag when true; passing `--flag false` is not a
@@ -255,9 +297,16 @@ public struct MCPServer: Sendable {
             }
 
             if let list = value as? [Any] {
-                guard !list.isEmpty else { continue }
-                argv.append(argument.name)
-                argv.append(contentsOf: list.map(stringify))
+                // One `--name value` pair per element. ArgumentParser's default
+                // for an array option is `.singleValue` — one value per
+                // occurrence — so `--name a b c` binds only `a` and spills the
+                // rest into positional slots. Repeated pairs parse identically
+                // under `.singleValue` and `.upToNextOption`, so this form is
+                // correct whichever the tool declared.
+                for element in list where !(element is NSNull) {
+                    argv.append(argument.name)
+                    argv.append(stringify(element))
+                }
             } else {
                 argv.append(argument.name)
                 argv.append(stringify(value))
@@ -309,8 +358,10 @@ public struct MCPServer: Sendable {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
             guard let reply = handle(Data(line.utf8)) else { continue }
 
-            FileHandle.standardOutput.write(reply)
-            FileHandle.standardOutput.write(Data("\n".utf8))
+            // Through Terminal rather than FileHandle: a client that has gone
+            // away closes the pipe, and that ends the server cleanly instead
+            // of raising an uncatchable exception mid-reply.
+            Terminal.write(reply + Data("\n".utf8))
         }
     }
 }

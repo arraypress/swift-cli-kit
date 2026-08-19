@@ -68,9 +68,17 @@ public struct ToolIndex: Codable, Sendable {
     ///   - manifests: One per tool, in any order.
     ///   - generated: A timestamp to stamp, or `nil` to omit it.
     public static func build(from manifests: [Manifest], generated: Date? = nil) -> ToolIndex {
+        // One entry per tool name, first occurrence winning. The same binary
+        // reachable two ways — a name and a path, or two PATH entries — must
+        // not count twice; deduplicating *before* the sort keeps the winner
+        // deterministic, because `sorted` makes no promise about the order of
+        // equal names.
+        var seen = Set<String>()
+        let unique = manifests.filter { seen.insert($0.tool).inserted }
+
         // Sorted by name so the output is stable across runs regardless of the
         // order tools were discovered in — otherwise every rebuild is a diff.
-        let entries = manifests
+        let entries = unique
             .sorted { $0.tool.localizedCaseInsensitiveCompare($1.tool) == .orderedAscending }
             .map { manifest in
                 Entry(

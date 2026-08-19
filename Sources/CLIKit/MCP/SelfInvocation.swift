@@ -41,6 +41,10 @@ enum SelfInvocation {
         let err = Pipe()
         process.standardOutput = out
         process.standardError = err
+        // Never the parent's stdin: under MCP that is the protocol channel,
+        // and a child that reads it — `auth login`, or `mcp` itself — would
+        // consume protocol frames or block on them forever.
+        process.standardInput = FileHandle.nullDevice
 
         do {
             try process.run()

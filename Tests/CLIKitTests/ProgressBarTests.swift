@@ -85,6 +85,8 @@ final class ProgressBarTests: XCTestCase {
     }
 
     func testTerminalWidthHasASaneFallback() {
-        XCTAssertGreaterThan(ProgressBar.terminalWidth(fallback: 80), 0)
+        // The bar shares TextTable's probe rather than carrying its own; a
+        // descriptor that is not a terminal must still yield a usable width.
+        XCTAssertGreaterThan(TextTable.width(of: FileHandle.standardError.fileDescriptor), 0)
     }
 }

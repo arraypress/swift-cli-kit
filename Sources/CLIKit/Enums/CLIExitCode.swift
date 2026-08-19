@@ -23,6 +23,11 @@ import Foundation
 ///   6) echo "extractor is broken, upgrade yt-meta" ;;
 /// esac
 /// ```
+///
+/// A closed pipe is part of the contract too: when the downstream reader stops
+/// early — `tool … | head -1` — the run ends with ``ok``, not with the shell's
+/// 141. ``CLIRunner`` ignores SIGPIPE and ``Terminal`` treats the resulting
+/// EPIPE on stdout as "the caller has what it wanted".
 public enum CLIExitCode: Int32, Sendable, CaseIterable {
 
     /// The command succeeded.

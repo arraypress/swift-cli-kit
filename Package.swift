@@ -40,7 +40,12 @@ let package = Package(
         ),
         .testTarget(
             name: "CLIKitTests",
-            dependencies: ["CLIKit"]
+            dependencies: [
+                "CLIKit",
+                // For the MCP round-trip tests, which parse a generated argv
+                // with a real command to prove the two layers agree.
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ]
         ),
     ]
 )

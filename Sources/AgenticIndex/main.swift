@@ -149,20 +149,39 @@ guard !manifests.isEmpty else {
 
 // MARK: - Output
 
+// The index deduplicates by tool name; saying so here is what stops a
+// doubled PATH entry looking like a tool that silently vanished.
+let names = manifests.map(\.tool)
+let duplicated = Set(names.filter { name in names.filter { $0 == name }.count > 1 })
+if !duplicated.isEmpty {
+    FileHandle.standardError.write(
+        Data("warning: duplicate tools indexed once: \(duplicated.sorted().joined(separator: ", "))\n".utf8)
+    )
+}
+
 let index = ToolIndex.build(from: manifests, generated: stamp ? Date() : nil)
 
 if asText {
     print(index.renderText())
 } else {
-    let data = try index.encoded()
-    if let output {
-        try data.write(to: URL(fileURLWithPath: (output as NSString).expandingTildeInPath))
+    do {
+        let data = try index.encoded()
+        if let output {
+            try data.write(to: URL(fileURLWithPath: (output as NSString).expandingTildeInPath))
+            FileHandle.standardError.write(
+                Data("wrote \(output) — \(index.toolCount) tools, \(index.commandCount) commands\n".utf8)
+            )
+        } else {
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        }
+    } catch {
+        // A clean line, not a Swift crash dump: this runs in CI, and the
+        // difference between the two is whether the log says what went wrong.
         FileHandle.standardError.write(
-            Data("wrote \(output) — \(index.toolCount) tools, \(index.commandCount) commands\n".utf8)
+            Data("error: could not write the index: \(error.localizedDescription)\n".utf8)
         )
-    } else {
-        FileHandle.standardOutput.write(data)
-        FileHandle.standardOutput.write(Data("\n".utf8))
+        exit(1)
     }
 }
 

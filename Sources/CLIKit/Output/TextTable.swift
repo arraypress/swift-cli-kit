@@ -21,10 +21,19 @@ public enum TextTable {
     /// Assumed width when stdout is not a terminal or reports nothing useful.
     static let fallbackWidth = 100
 
-    /// The terminal's column count.
+    /// The terminal's column count, probed on standard output.
     public static var terminalWidth: Int {
+        width(of: FileHandle.standardOutput.fileDescriptor)
+    }
+
+    /// The column count of the terminal behind a descriptor.
+    ///
+    /// Parameterised because the two streams can differ: a progress bar draws
+    /// on stderr while a table goes to stdout, and `tool > out.json` leaves
+    /// only one of them a terminal.
+    public static func width(of descriptor: Int32) -> Int {
         var size = winsize()
-        if ioctl(FileHandle.standardOutput.fileDescriptor, TIOCGWINSZ, &size) == 0, size.ws_col > 20 {
+        if ioctl(descriptor, TIOCGWINSZ, &size) == 0, size.ws_col > 20 {
             return Int(size.ws_col)
         }
         if let columns = ProcessInfo.processInfo.environment["COLUMNS"], let value = Int(columns), value > 20 {

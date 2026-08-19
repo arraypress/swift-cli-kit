@@ -45,6 +45,12 @@ public struct DiskCache: Sendable {
     /// otherwise keep serving the old shape until the TTL expired. On a
     /// week-long TTL that is a week of a fixed bug looking unfixed, and the
     /// user has no reason to suspect the cache.
+    ///
+    /// The accepted cost: two *builds* of the same tool sharing one cache — a
+    /// dev build beside the installed one, given the mtime fallback below —
+    /// purge each other's entries every time they alternate. Correct, just
+    /// cold; a per-generation directory would trade that for orphaned
+    /// generations nothing ever sweeps.
     public let version: String
 
     // MARK: Initialisation
@@ -81,17 +87,13 @@ public struct DiskCache: Sendable {
 
     /// The cache directory, honouring `XDG_CACHE_HOME`.
     public var directoryURL: URL {
-        let environment = ProcessInfo.processInfo.environment
-        let base: URL
-        if let xdg = environment["XDG_CACHE_HOME"], !xdg.isEmpty {
-            base = URL(fileURLWithPath: xdg, isDirectory: true)
-        } else {
-            base = FileManager.default.homeDirectoryForCurrentUser
+        XDG.directory(
+            ProcessInfo.processInfo.environment["XDG_CACHE_HOME"],
+            or: FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".cache", isDirectory: true)
-        }
-        return base
-            .appendingPathComponent(namespace, isDirectory: true)
-            .appendingPathComponent(tool, isDirectory: true)
+        )
+        .appendingPathComponent(namespace, isDirectory: true)
+        .appendingPathComponent(tool, isDirectory: true)
     }
 
     private func entryURL(for key: String) -> URL {

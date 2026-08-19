@@ -40,6 +40,13 @@ public enum CLIRunner {
     /// }
     /// ```
     public static func run<Root: ParsableCommand>(_ root: Root.Type) async -> Never {
+        // A pipeline that stops reading — `tool … | head -1` — must end the
+        // run cleanly, not kill it. Ignoring SIGPIPE turns the broken pipe
+        // into an EPIPE that ``Terminal`` treats as a normal early exit 0;
+        // the default disposition would end the process at 128+13, a code
+        // outside the family's documented contract.
+        signal(SIGPIPE, SIG_IGN)
+
         do {
             var command = try root.parseAsRoot()
 

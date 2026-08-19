@@ -52,15 +52,12 @@ public struct FileCredentialStore: CredentialStore {
 
     /// The config directory, honouring `XDG_CONFIG_HOME`.
     private var directoryURL: URL {
-        let environment = ProcessInfo.processInfo.environment
-        let base: URL
-        if let xdg = environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
-            base = URL(fileURLWithPath: xdg, isDirectory: true)
-        } else {
-            base = FileManager.default.homeDirectoryForCurrentUser
+        XDG.directory(
+            ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"],
+            or: FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".config", isDirectory: true)
-        }
-        return base.appendingPathComponent(namespace, isDirectory: true)
+        )
+        .appendingPathComponent(namespace, isDirectory: true)
     }
 
     /// The credentials file itself.

@@ -39,6 +39,21 @@ final class ToolIndexTests: XCTestCase {
 
     // MARK: - Merging
 
+    func testDuplicateToolNamesAreIndexedOnceFirstWins() {
+        // The same binary reachable by name and by path must not count twice,
+        // and which copy survives must not depend on sort internals.
+        let index = ToolIndex.build(from: [
+            manifest(tool: "dup", version: "1.0.0", commands: [command(["x"])]),
+            manifest(tool: "solo", commands: [command(["y"])]),
+            manifest(tool: "dup", version: "2.0.0", commands: [command(["x"]), command(["z"])]),
+        ])
+
+        XCTAssertEqual(index.toolCount, 2)
+        XCTAssertEqual(index.tools.map(\.tool), ["dup", "solo"])
+        XCTAssertEqual(index.tools[0].version, "1.0.0", "first occurrence wins")
+        XCTAssertEqual(index.commandCount, 2)
+    }
+
     func testToolsAreSortedByNameForStableOutput() {
         // Discovery order varies with the filesystem; an unsorted index would
         // produce a diff on every rebuild.
