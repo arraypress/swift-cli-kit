@@ -1,6 +1,6 @@
 # Swift CLIKit
 
-The shared foundation for the ArrayPress family of metadata CLIs. Every tool — `yt-meta`, `tmdb-meta`, `discogs-meta` — gets the same credential store, the same output rules, the same exit codes and the same cache from this one package.
+The shared foundation for the ArrayPress family of metadata CLIs. Every tool — `yt-fetch`, `tmdb-fetch`, `discogs-fetch` — gets the same credential store, the same output rules, the same exit codes and the same cache from this one package.
 
 Built for tools whose main caller is an **agent or a script**, not a person. That constraint drives most of the design: output defaults to JSON when piped, errors are machine-readable and carry a repair hint, exit codes are a stable contract, and payloads are curated rather than dumped.
 
@@ -12,6 +12,7 @@ Built for tools whose main caller is an **agent or a script**, not a person. Tha
 - 🖨️ **Dual-audience output** — JSON when piped, readable text on a terminal; no flag required either way
 - ✂️ **Field selection** — `--fields` narrows any payload, keeping responses cheap
 - 💾 **TTL disk cache** — repeat lookups served locally, off the failure path entirely
+- 📁 **Batch plumbing** — tilde expansion, input gathering and collision-proof output names, shared instead of reinvented
 - 🍎 **Swift 6** · Apple silicon · macOS 14+ · strict concurrency
 
 ## Installation
@@ -41,12 +42,17 @@ These are a public contract. Append new ones; never renumber.
 The `1` / `6` split is the one that matters most. "This video has no transcript" and "our extractor broke" both look like a missing result, but the first means stop and the second means file a bug.
 
 ```sh
-yt-meta transcript "$URL" || case $? in
+yt-fetch transcript "$URL" || case $? in
   1) echo "no transcript exists" ;;
   4) sleep 60 ;;
-  6) brew upgrade yt-meta ;;
+  6) brew upgrade yt-fetch ;;
 esac
 ```
+
+A closed pipe is part of the contract too. When the downstream reader stops
+early — `yt-fetch … | head -1` — the run ends `0`, not the shell's `141`:
+`CLIRunner` ignores SIGPIPE, and a broken stdout is read as "the caller has
+what it wanted", not as a failure.
 
 Argument mistakes exit `2` whichever layer catches them. ArgumentParser's own
 default is `64` (BSD `sysexits.h`), so for a while a tool answered the same
@@ -57,7 +63,7 @@ it instead of `@main` on the root command:
 ```swift
 @main
 enum Main {
-    static func main() async { await CLIRunner.run(TMDBMeta.self) }
+    static func main() async { await CLIRunner.run(TMDBFetch.self) }
 }
 ```
 
@@ -69,13 +75,12 @@ Declare the service, adopt `CLICommand`, and the rest is wired for you.
 import ArgumentParser
 import CLIKit
 
-@main
-struct TMDBMeta: AsyncParsableCommand, ServiceProviding {
+struct TMDBFetch: AsyncParsableCommand, ServiceProviding {
 
     static let service = ServiceSpec(
         id: "tmdb",
         displayName: "TMDB",
-        toolName: "tmdb-meta",
+        toolName: "tmdb-fetch",
         credentials: [
             CredentialSpec(key: "api_key", label: "API key", envNames: ["TMDB_API_KEY"])
         ],
@@ -84,8 +89,8 @@ struct TMDBMeta: AsyncParsableCommand, ServiceProviding {
 
     static var configuration: CommandConfiguration {
         CommandConfiguration(
-            commandName: "tmdb-meta",
-            subcommands: [Movie.self, AuthCommand<TMDBMeta>.self]
+            commandName: "tmdb-fetch",
+            subcommands: [Movie.self, AuthCommand<TMDBFetch>.self]
         )
     }
 }
@@ -97,14 +102,14 @@ struct Movie: CLICommand {
     @OptionGroup var common: CommonOptions
 
     func execute() async throws {
-        let key = try CredentialResolver(service: TMDBMeta.service).require("api_key")
+        let key = try CredentialResolver(service: TMDBFetch.service).require("api_key")
         let movie = try await TMDBMetadata.movie(id, configuration: .init(apiKey: key))
         try common.emitter.emit(MoviePayload(movie, full: common.full))
     }
 }
 ```
 
-`AuthCommand<TMDBMeta>` provides `auth login`, `auth status` and `auth logout` from the `ServiceSpec` alone. Adopting `CLICommand` maps any thrown `CLIError` onto the right exit code and envelope.
+`AuthCommand<TMDBFetch>` provides `auth login`, `auth status` and `auth logout` from the `ServiceSpec` alone. Adopting `CLICommand` maps any thrown `CLIError` onto the right exit code and envelope.
 
 ## Discovery: `describe` and `mcp`
 
@@ -151,24 +156,31 @@ generated rather than curated.
 ### `<tool> mcp`
 
 A Model Context Protocol server on stdio, with one MCP tool per command,
-generated from the same manifest:
+generated from the same manifest — except the protocol machinery itself:
+`mcp` and `describe` stay in the manifest but are never advertised as tools,
+because a server nested inside a server blocks on a stream that is already
+spoken for.
 
 ```json
 { "mcpServers": { "youtube": { "command": "yt-fetch", "args": ["mcp"] } } }
 ```
 
-Three decisions worth knowing:
+Four decisions worth knowing:
 
 - **It re-executes itself per call.** stdout is the protocol channel, so a
   command writing its payload there would corrupt the stream. A subprocess keeps
   them apart and preserves the exit code and stderr envelope exactly as a shell
-  caller sees them.
+  caller sees them. The child's stdin is the null device — the protocol stream
+  stays the parent's alone.
 - **Failures come back as tool content with `isError`, not JSON-RPC errors.** The
   stderr envelope carries the `hint` that lets a model repair itself; a transport
   fault would throw that away.
 - **Format flags are hidden over MCP.** The transport always wants the piped
   default, and offering `--text` invites a model to request prose it then has to
   parse.
+- **Array arguments become repeated pairs.** `--field a --field b`, never
+  `--field a b` — the second form binds one value under ArgumentParser's default
+  `.singleValue` parsing and spills the rest into positional slots.
 
 Credentials are resolved inside the process, so an MCP client never holds them —
 unlike a server configured with keys pasted into its JSON.
@@ -250,12 +262,12 @@ Environment wins so CI, containers and one-off overrides never touch persistent 
 }
 ```
 
-One shared file is what makes many small binaries workable: `tmdb-meta auth login` and `discogs-meta auth login` write to the same place, and any tool can report on the others.
+One shared file is what makes many small binaries workable: `tmdb-fetch auth login` and `discogs-fetch auth login` write to the same place, and any tool can report on the others.
 
 ```sh
-tmdb-meta auth login              # prompts, echo disabled
-echo "$KEY" | tmdb-meta auth login --stdin --key api_key
-tmdb-meta auth status             # exits 3 if a required credential is missing
+tmdb-fetch auth login              # prompts, echo disabled
+echo "$KEY" | tmdb-fetch auth login --stdin --key api_key
+tmdb-fetch auth status             # exits 3 if a required credential is missing
 ```
 
 Secrets are never accepted as command-line arguments — an argument is visible in `ps` and written to shell history.
@@ -264,7 +276,7 @@ Secrets are never accepted as command-line arguments — an argument is visible 
 
 Keychain ACLs are bound to code signature, and a SwiftPM or Homebrew-bottled binary is **ad-hoc signed**: its identity changes on every rebuild and every version bump. An item written by one build prompts when read by the next, and `brew upgrade` re-triggers it.
 
-That breaks worst under this project's shape, where many separate binaries share one store — `tmdb-meta` writing an item that `discogs-meta` reads is a cross-identity access, and therefore a GUI prompt.
+That breaks worst under this project's shape, where many separate binaries share one store — `tmdb-fetch` writing an item that `discogs-fetch` reads is a cross-identity access, and therefore a GUI prompt.
 
 The decisive problem is headless use. An agent invoking these tools from a background process, over SSH, or in CI meets either a locked keychain (`errSecInteractionNotAllowed`) or a dialog that hangs the call — worse than a clean failure.
 
@@ -311,7 +323,7 @@ Diagnostics, warnings and prompts all go to **stderr**, so piping stdout into a 
 ## Cache
 
 ```swift
-let cache = DiskCache(tool: "yt-meta", isEnabled: !common.noCache)
+let cache = DiskCache(tool: "yt-fetch", isEnabled: !common.noCache)
 
 let payload = try await cache.cached("transcript/\(id)/en", ttl: 7 * 24 * 3600) {
     TranscriptPayload(try await YouTubeTranscript.fetch(id))
@@ -321,6 +333,22 @@ let payload = try await cache.cached("transcript/\(id)/en", ttl: 7 * 24 * 3600) 
 Entries are plain files under `~/.cache/arraypress/<tool>/`, inspectable with `ls` and resettable with `rm -rf`. A corrupt, missing or unwritable entry degrades to a live fetch — the cache is never a reason for a command to fail.
 
 Include every input that changes the result in the key, including flags that change the payload shape: a cached slim result must never be served to a caller that asked for `--full`.
+
+## Paths and batch names
+
+The two pieces of filesystem plumbing every bulk tool reinvents:
+
+```swift
+let inputs = try FileSet.gather(specs.map(\.expandedPath), matching: ["yaml"])
+let names  = try BatchNames.unique(for: inputs, suffix: ".pdf")
+```
+
+`expandedPath` expands a leading `~` — a path read from a profile, a config
+file or an MCP argument never met a shell. `BatchNames` derives each output
+name from its input's basename and refuses to let two collide: duplicate
+basenames get their parent directory as a prefix (`2024-acme.pdf` beside
+`2025-acme.pdf`), and the same file given twice is a usage error rather than
+two identical documents wearing different names.
 
 ## Requirements
 
