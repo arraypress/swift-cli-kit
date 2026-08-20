@@ -35,6 +35,32 @@ import Foundation
 /// any process running as the user. Keychain's real edge is encryption at rest
 /// against offline disk access, which FileVault already covers.
 ///
+/// ### Two escape routes, both closed
+///
+/// **The data-protection keychain** (`kSecUseDataProtectionKeychain`) replaces
+/// ACLs with access groups, which sounds like the fix. It is not: a custom
+/// access group requires a `keychain-access-groups` entitlement from a
+/// provisioning profile, and an unsigned command-line tool cannot carry one.
+/// Without it each binary falls back to its own identifier, which is the
+/// instability above by another name.
+///
+/// **Shelling out to `/usr/bin/security`** genuinely does dodge the signature
+/// problem, because that binary is a stable, Apple-signed identity — so an item
+/// created with `-T /usr/bin/security` stays readable across rebuilds. The
+/// costs are a subprocess per read (tens of milliseconds, on every invocation
+/// of every tool), the secret crossing a pipe, and a locked keychain still
+/// failing headless. It trades the whole problem for most of the problem.
+///
+/// ### Signing does not rescue this either
+///
+/// Ad-hoc signing is not optional on Apple silicon — arm64 refuses to exec a
+/// binary whose signature does not match, which is why `Scripts/build-release.sh`
+/// re-signs after stripping. So every tool in this family *is* signed, just with
+/// an identity that changes on each build. The same constraint that makes
+/// notarization unnecessary for Homebrew formulae (Gatekeeper only assesses
+/// files carrying `com.apple.quarantine`, which formulae never set) is what
+/// makes keychain ACLs unusable here.
+///
 /// A keychain backend remains a reasonable opt-in for someone who signs their
 /// binaries with a stable Developer ID. Conform a new type here and no service
 /// CLI needs to change.
