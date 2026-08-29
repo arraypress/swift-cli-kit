@@ -52,12 +52,7 @@ public struct FileCredentialStore: CredentialStore {
 
     /// The config directory, honouring `XDG_CONFIG_HOME`.
     private var directoryURL: URL {
-        XDG.directory(
-            ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"],
-            or: FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".config", isDirectory: true)
-        )
-        .appendingPathComponent(namespace, isDirectory: true)
+        XDG.configHome.appendingPathComponent(namespace, isDirectory: true)
     }
 
     /// The credentials file itself.
@@ -147,51 +142,12 @@ public struct FileCredentialStore: CredentialStore {
     }
 
     private func save(_ contents: Contents) throws {
-        let directory = directoryURL
-        let manager = FileManager.default
-
-        if !manager.fileExists(atPath: directory.path) {
-            try manager.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-        }
-
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]
-        let data = try encoder.encode(contents)
-
-        // Create the replacement with restrictive permissions from the start,
-        // then move it into place. Writing the real file directly would leave a
-        // window in which secrets sat on disk at the default mode.
-        let temporaryURL = directory.appendingPathComponent(
-            ".credentials.\(UUID().uuidString).tmp",
-            isDirectory: false
-        )
-
-        guard manager.createFile(
-            atPath: temporaryURL.path,
-            contents: data,
-            attributes: [.posixPermissions: 0o600]
-        ) else {
-            throw CLIError(code: .upstream, message: "Could not write to \(directory.path)")
-        }
-
-        let destination = fileURL
         do {
-            if manager.fileExists(atPath: destination.path) {
-                _ = try manager.replaceItemAt(destination, withItemAt: temporaryURL)
-                // replaceItemAt can carry over the original's attributes.
-                try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
-            } else {
-                try manager.moveItem(at: temporaryURL, to: destination)
-            }
+            try SecureFile.write(contents, to: fileURL)
         } catch {
-            try? manager.removeItem(at: temporaryURL)
             throw CLIError(
                 code: .upstream,
-                message: "Could not save credentials: \(error.localizedDescription)"
+                message: "Could not save credentials: \(error.cliMessage)"
             )
         }
     }

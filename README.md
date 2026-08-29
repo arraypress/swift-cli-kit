@@ -12,7 +12,7 @@ Built for tools whose main caller is an **agent or a script**, not a person. Tha
 - 🖨️ **Dual-audience output** — JSON when piped, readable text on a terminal; no flag required either way
 - ✂️ **Field selection** — `--fields` narrows any payload, keeping responses cheap
 - 💾 **TTL disk cache** — repeat lookups served locally, off the failure path entirely
-- 📁 **Batch plumbing** — tilde expansion, input gathering and collision-proof output names, shared instead of reinvented
+- 📁 **File plumbing** — tilde expansion, input gathering, collision-proof output names and owner-only files, shared instead of reinvented
 - 🍎 **Swift 6** · Apple silicon · macOS 14+ · strict concurrency
 
 ## Installation
@@ -334,13 +334,17 @@ Entries are plain files under `~/.cache/arraypress/<tool>/`, inspectable with `l
 
 Include every input that changes the result in the key, including flags that change the payload shape: a cached slim result must never be served to a caller that asked for `--full`.
 
-## Paths and batch names
+## Paths, files and batch names
 
-The two pieces of filesystem plumbing every bulk tool reinvents:
+The filesystem plumbing every bulk tool reinvents:
 
 ```swift
 let inputs = try FileSet.gather(specs.map(\.expandedPath), matching: ["yaml"])
 let names  = try BatchNames.unique(for: inputs, suffix: ".pdf")
+
+let spec   = try Files.read(path, service: "resume", hint: "pass a JSON file, or - for stdin")
+let out    = try Files.ensureDirectory("~/Documents/out")
+try Files.write(pdf, to: "~/Documents/out/cv.pdf")
 ```
 
 `expandedPath` expands a leading `~` — a path read from a profile, a config
@@ -349,6 +353,41 @@ name from its input's basename and refuses to let two collide: duplicate
 basenames get their parent directory as a prefix (`2024-acme.pdf` beside
 `2025-acme.pdf`), and the same file given twice is a usage error rather than
 two identical documents wearing different names.
+
+`Files` does the three lines every tool writes with the same omissions: each
+expands the tilde, and each fails as a `CLIError` with the right exit code — a
+missing input is `1` (not found), an unwritable output is `5` — rather than a
+bare Foundation message. `Files.read("-")` reads standard input, the family's
+spelling for "what is piped in".
+
+### Owner-only files
+
+```swift
+try SecureFile.write(profile, to: XDG.configHome
+    .appendingPathComponent("arraypress/resume/profile.json"))
+```
+
+A saved profile is somebody's address and date of birth; the credential store
+is their secrets. `SecureFile` writes both the same way: the parent directory
+made at `0700`, the file created at `0600` from the first byte and then moved
+into place — never written at the umask default and tightened afterwards. The
+`Encodable` overload uses `JSONEncoder.readable` (sorted keys, pretty-printed),
+so a file somebody opens to fix by hand is one they can, and two saves of the
+same thing are the same bytes.
+
+`XDG.configHome` and `XDG.cacheHome` are the family's one answer to where
+"home" is — `$XDG_CONFIG_HOME` or `~/.config`, `$XDG_CACHE_HOME` or `~/.cache`,
+a relative or empty value ignored as the specification says — so one
+environment variable moves every tool's state, and a test run never writes
+into a real profile to find out whether saving works.
+
+### The small things
+
+```swift
+guard !name.isBlank else { … }             // "" and "   " alike
+Terminal.writeError("wrote " + "page".counted(pages))   // 1 page, 3 pages
+failures.append((input, error.cliMessage)) // a CLIError's message, else localizedDescription
+```
 
 ## Requirements
 

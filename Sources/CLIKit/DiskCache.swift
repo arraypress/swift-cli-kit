@@ -87,13 +87,9 @@ public struct DiskCache: Sendable {
 
     /// The cache directory, honouring `XDG_CACHE_HOME`.
     public var directoryURL: URL {
-        XDG.directory(
-            ProcessInfo.processInfo.environment["XDG_CACHE_HOME"],
-            or: FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cache", isDirectory: true)
-        )
-        .appendingPathComponent(namespace, isDirectory: true)
-        .appendingPathComponent(tool, isDirectory: true)
+        XDG.cacheHome
+            .appendingPathComponent(namespace, isDirectory: true)
+            .appendingPathComponent(tool, isDirectory: true)
     }
 
     private func entryURL(for key: String) -> URL {

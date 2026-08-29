@@ -15,6 +15,6 @@ extension String {
     /// from the parser, and an empty `abstract` should be absent rather than
     /// present-and-blank.
     var nilIfEmpty: String? {
-        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
+        isBlank ? nil : self
     }
 }
