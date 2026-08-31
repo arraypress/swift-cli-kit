@@ -385,4 +385,15 @@ final class CLIKitTests: XCTestCase {
             Data("payload".utf8)
         )
     }
+
+    func testErrorRenderingPrimitivesAlone() {
+        // The escaping and assembly pinned with no error constructed.
+        XCTAssertEqual(ErrorRendering.quoted("plain"), "\"plain\"")
+        XCTAssertEqual(ErrorRendering.quoted("a\"b\\c\nd"), "\"a\\\"b\\\\c\\nd\"")
+        XCTAssertEqual(ErrorRendering.quoted("bell\u{07}"), "\"bell\\u0007\"")
+        XCTAssertEqual(ErrorRendering.human(message: "m", hint: nil), "error: m")
+        XCTAssertEqual(ErrorRendering.human(message: "m", hint: "h"), "error: m\n  hint: h")
+        XCTAssertEqual(ErrorRendering.envelope(code: "usage", message: "bad", service: nil, hint: nil),
+                       "{\"error\":{\"code\":\"usage\",\"message\":\"bad\"}}")
+    }
 }
