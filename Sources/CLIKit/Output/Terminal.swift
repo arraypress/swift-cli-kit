@@ -32,6 +32,37 @@ public enum Terminal {
         isatty(FileHandle.standardError.fileDescriptor) == 1
     }
 
+    /// Text piped into standard input, or `nil` when nothing was piped.
+    ///
+    /// Only a FIFO or a regular file is read. A terminal is not — but nor is
+    /// any other character device, and that distinction is the whole point: an
+    /// agent harness runs commands with stdin on `/dev/null` or an open pty,
+    /// so the obvious test ("not a tty, therefore read to EOF") hangs there
+    /// forever. What can be piped is what gets read.
+    ///
+    /// Returns `nil` rather than `""` for an empty pipe, so a caller can tell
+    /// "nothing was piped" from "an empty thing was piped" with `??`.
+    public static func pipedStdin() -> String? {
+        var status = stat()
+        guard fstat(FileHandle.standardInput.fileDescriptor, &status) == 0 else { return nil }
+        let kind = status.st_mode & S_IFMT
+        guard kind == S_IFIFO || kind == S_IFREG else { return nil }
+        let data = FileHandle.standardInput.readDataToEndOfFile()
+        guard !data.isEmpty else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Whether anything is available to read on standard input.
+    ///
+    /// Same rule as ``pipedStdin()`` and consuming nothing, for a command that
+    /// wants to choose a code path before it reads.
+    public static var hasPipedStdin: Bool {
+        var status = stat()
+        guard fstat(FileHandle.standardInput.fileDescriptor, &status) == 0 else { return false }
+        let kind = status.st_mode & S_IFMT
+        return kind == S_IFIFO || kind == S_IFREG
+    }
+
     /// Writes to standard output. Never adds a newline.
     public static func write(_ string: String) {
         write(Data(string.utf8))
