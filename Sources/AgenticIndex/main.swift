@@ -172,8 +172,12 @@ if asText {
                 Data("wrote \(output) — \(index.toolCount) tools, \(index.commandCount) commands\n".utf8)
             )
         } else {
-            FileHandle.standardOutput.write(data)
-            FileHandle.standardOutput.write(Data("\n".utf8))
+            // Terminal.write, not FileHandle: a closed stdout — this piped
+            // into `head` — raises an uncatchable NSFileHandleOperationException
+            // where Terminal returns EPIPE and exits 0. The index is large
+            // enough to outrun the pipe buffer and reach that path.
+            Terminal.write(data)
+            Terminal.writeLine()
         }
     } catch {
         // A clean line, not a Swift crash dump: this runs in CI, and the
