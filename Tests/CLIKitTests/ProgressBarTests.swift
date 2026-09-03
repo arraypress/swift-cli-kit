@@ -129,13 +129,26 @@ final class ProgressBarTests: XCTestCase {
         XCTAssertEqual(output.components(separatedBy: "Transcribing").count - 1, 1, output)
     }
 
-    func testAFractionWithNoLabelSaysNothing() {
-        // Phase lines are keyed to the label; a bare fraction has no phase to
-        // report and must not produce a line per call.
+    func testBareFractionsAnnounceTheBarsOwnLabelOnce() {
+        // The commonest shape in the fleet: name the work at construction,
+        // then push bare fractions. `dupe` says "scanning" once and never
+        // again. Keying announcements strictly to a NEW label meant those
+        // tools stayed completely silent in a log, which is the bug this
+        // whole change exists to fix — so the bar's own label is the phase.
         let output = capturingStderr {
-            let bar = ProgressBar(label: "start")
+            let bar = ProgressBar(label: "scanning")
             bar.update(0.1)
+            bar.update(0.5)
             bar.update(0.9)
+        }
+        XCTAssertEqual(output.components(separatedBy: "scanning").count - 1, 1, output)
+    }
+
+    func testAnUnlabelledBarStaysSilent() {
+        // Nothing to name, nothing to say.
+        let output = capturingStderr {
+            let bar = ProgressBar(label: "")
+            bar.update(0.1)
         }
         XCTAssertEqual(output, "")
     }

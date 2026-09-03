@@ -145,14 +145,22 @@ public final class ProgressBar: @unchecked Sendable {
     /// Only on a CHANGE: the callback behind this fires hundreds of times a
     /// second and the point is a legible log, not a flood.
     private func announce(_ label: String?) {
-        guard announcePhases, let label else { return }
+        guard announcePhases else { return }
 
         lock.lock()
         defer { lock.unlock() }
 
-        guard label != lastAnnounced else { return }
-        lastAnnounced = label
-        Terminal.writeError(label + "…")
+        // Falls back to the label the bar was CREATED with. Most tools name
+        // the work once and then push bare fractions — `dupe` says "scanning"
+        // at construction and never again — so keying announcements strictly
+        // to a new label meant the commonest shape in the fleet announced
+        // nothing at all. The bar's label is the phase; a change of label is
+        // a change of phase.
+        let phase = label ?? self.label
+        guard !phase.isEmpty, phase != lastAnnounced else { return }
+        lastAnnounced = phase
+        if let label { self.label = label }
+        Terminal.writeError(phase + "…")
     }
 
     // MARK: Internals
