@@ -159,4 +159,21 @@ extension FileSetTests {
             ["#0f766e", "rgb(15,118,110)", "#ff0000"]
         )
     }
+
+    func testGatherAllTakesEveryExtension() throws {
+        // The reach is the point for a preview or a duplicate scan: an
+        // extension filter would silently drop the very files the caller
+        // wanted looked at, and report success over what is left.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gatherall-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for name in ["a.txt", "b.sketch", "c", "d.key"] {
+            try "x".write(to: directory.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+
+        let all = try FileSet.gatherAll([directory.path])
+        XCTAssertEqual(all.count, 4)
+        XCTAssertEqual(try FileSet.gather([directory.path], matching: ["txt"]).count, 1)
+    }
 }

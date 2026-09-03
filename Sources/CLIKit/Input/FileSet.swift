@@ -36,6 +36,26 @@ public enum FileSet {
         matching extensions: Set<String>,
         recursive: Bool = false
     ) throws -> [URL] {
+        try gather(paths, matching: .some(extensions), recursive: recursive)
+    }
+
+    /// Every regular file under the given paths, whatever its extension.
+    ///
+    /// For tools whose reach is the point — a Quick Look preview, a duplicate
+    /// scan, a secret sweep — where filtering by extension would silently
+    /// drop the very files the caller wants looked at.
+    public static func gatherAll(
+        _ paths: [String],
+        recursive: Bool = false
+    ) throws -> [URL] {
+        try gather(paths, matching: nil, recursive: recursive)
+    }
+
+    private static func gather(
+        _ paths: [String],
+        matching extensions: Set<String>?,
+        recursive: Bool
+    ) throws -> [URL] {
         var found: [URL] = []
         let manager = FileManager.default
 
@@ -58,7 +78,7 @@ public enum FileSet {
             ) else { continue }
 
             for case let candidate as URL in walker
-            where extensions.contains(candidate.pathExtension.lowercased()) {
+            where extensions?.contains(candidate.pathExtension.lowercased()) ?? true {
                 // A folder has no extension either. Where "" is accepted so
                 // that extensionless files are found, every sub-folder would
                 // otherwise be counted as one.
