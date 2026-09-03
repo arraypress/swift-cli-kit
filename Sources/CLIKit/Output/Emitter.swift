@@ -133,13 +133,56 @@ public struct Emitter: Sendable {
         }
         guard !values.isEmpty else { return }
 
-        Terminal.writeLine(
-            TextTable.render(
-                columns: T.tableColumns,
-                rows: values.map(\.tableRow),
-                flexible: T.flexibleColumns
-            )
+        let (columns, rows, flexible) = select(
+            columns: T.tableColumns,
+            rows: values.map(\.tableRow),
+            flexible: T.flexibleColumns
         )
+        guard !columns.isEmpty else { return }
+
+        Terminal.writeLine(
+            TextTable.render(columns: columns, rows: rows, flexible: flexible)
+        )
+    }
+
+    /// Applies `--fields` to a table.
+    ///
+    /// The table path used to ignore the flag entirely: `--fields id,price`
+    /// projected correctly under `--json` and printed every column under
+    /// `--text`, with nothing said. A flag that works in one format and is
+    /// silently dropped in another is worse than one that does not exist.
+    ///
+    /// Names match the COLUMN HEADINGS here, case-insensitively, because that
+    /// is what a person reading a table can see and therefore what they type.
+    /// The JSON path matches the underlying keys, which are not always the same
+    /// word — a heading reading `SHARE` may be a `percent` field. Rather than
+    /// guess a mapping that does not exist, each format matches what it shows,
+    /// and a name that hits nothing warns instead of quietly emptying the
+    /// table.
+    private func select(
+        columns: [String], rows: [[String]], flexible: [Int]
+    ) -> ([String], [[String]], [Int]) {
+        guard let fields, !fields.isEmpty else { return (columns, rows, flexible) }
+
+        let wanted = Set(fields.map { $0.lowercased() })
+        let keep = columns.indices.filter { wanted.contains(columns[$0].lowercased()) }
+
+        guard !keep.isEmpty else {
+            Terminal.writeError(
+                "warning: --fields matched no column; this table has: "
+                + columns.joined(separator: ", ")
+            )
+            return (columns, rows, flexible)
+        }
+
+        // Flexible columns are recorded by INDEX, so they have to be renumbered
+        // against the surviving set or the wrong column absorbs the slack.
+        let renumbered = keep.enumerated().compactMap { new, old in
+            flexible.contains(old) ? new : nil
+        }
+        return (keep.map { columns[$0] },
+                rows.map { row in keep.compactMap { $0 < row.count ? row[$0] : nil } },
+                renumbered)
     }
 
     /// The non-tabular path, kept reachable from the table overload.
