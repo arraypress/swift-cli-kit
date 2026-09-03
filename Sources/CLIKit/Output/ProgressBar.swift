@@ -38,6 +38,12 @@ public final class ProgressBar: @unchecked Sendable {
     /// Whether drawing is possible at all.
     private let enabled: Bool
 
+    /// Whether phase changes are announced as plain lines when drawing is off.
+    private let announcePhases: Bool
+
+    /// The last phase announced, so only a CHANGE writes a line.
+    private var lastAnnounced: String?
+
     /// The last fraction drawn, so a repeated value costs nothing.
     private var lastDrawn: Int = -1
 
@@ -53,9 +59,17 @@ public final class ProgressBar: @unchecked Sendable {
     ///   - label: Shown to the left of the bar.
     ///   - enabled: Defaults to "stderr is a terminal". Pass `false` for
     ///     `--quiet`.
-    public init(label: String, enabled: Bool? = nil) {
+    ///   - announcePhases: When drawing is off, still write ONE line each time
+    ///     the label changes. This is the "periodic lines in a log" the header
+    ///     note above promises and nothing could previously ask for. Without
+    ///     it, a long silent phase — a first-run model download, say — is
+    ///     indistinguishable from a hang to CI, to an agent, or to anyone
+    ///     piping the output. `transcribe` looked frozen for ten minutes that
+    ///     way. Defaults to `false` so no existing tool changes behaviour.
+    public init(label: String, enabled: Bool? = nil, announcePhases: Bool = false) {
         self.label = label
         self.enabled = enabled ?? Terminal.stderrIsTTY
+        self.announcePhases = announcePhases
     }
 
     // MARK: Drawing
@@ -65,7 +79,10 @@ public final class ProgressBar: @unchecked Sendable {
     /// Rounded to whole percent before comparing, so a callback firing hundreds
     /// of times a second still only redraws a hundred times.
     public func update(_ fraction: Double, label: String? = nil) {
-        guard enabled else { return }
+        guard enabled else {
+            announce(label)
+            return
+        }
 
         lock.lock()
         defer { lock.unlock() }
@@ -97,6 +114,21 @@ public final class ProgressBar: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         if enabled { clear() }
+    }
+
+    /// Writes one line for a phase the caller has just entered.
+    ///
+    /// Only on a CHANGE: the callback behind this fires hundreds of times a
+    /// second and the point is a legible log, not a flood.
+    private func announce(_ label: String?) {
+        guard announcePhases, let label else { return }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard label != lastAnnounced else { return }
+        lastAnnounced = label
+        Terminal.writeError(label + "…")
     }
 
     // MARK: Internals

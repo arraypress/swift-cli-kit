@@ -77,6 +77,50 @@ final class ProgressBarTests: XCTestCase {
         XCTAssertTrue(output.contains("100%"))
     }
 
+    // MARK: Phase announcements
+
+    func testPhasesAreSilentByDefaultWhenDrawingIsOff() {
+        // The default must not change what 74 existing tools already print.
+        let output = capturingStderr {
+            let bar = ProgressBar(label: "start", enabled: false)
+            bar.update(0.1, label: "Installing model")
+            bar.update(0.5, label: "Transcribing")
+        }
+        XCTAssertEqual(output, "")
+    }
+
+    func testAnnouncedPhasesWriteOneLineEach() {
+        // A long silent phase is indistinguishable from a hang in a log.
+        let output = capturingStderr {
+            let bar = ProgressBar(label: "start", enabled: false, announcePhases: true)
+            bar.update(0, label: "Installing model")
+            bar.update(0.5, label: "Transcribing")
+        }
+        XCTAssertTrue(output.contains("Installing model…"), output)
+        XCTAssertTrue(output.contains("Transcribing…"), output)
+    }
+
+    func testOnlyAChangeAnnounces() {
+        // The callback behind this fires hundreds of times a second; the point
+        // is a legible log, not a flood.
+        let output = capturingStderr {
+            let bar = ProgressBar(label: "start", enabled: false, announcePhases: true)
+            for step in 0...100 {
+                bar.update(Double(step) / 100, label: "Transcribing")
+            }
+        }
+        XCTAssertEqual(output.components(separatedBy: "Transcribing").count - 1, 1, output)
+    }
+
+    func testAnnouncementsDoNotFireWhenTheBarIsDrawing() {
+        // A terminal gets the bar; a log gets the lines. Never both.
+        let output = capturingStderr {
+            let bar = ProgressBar(label: "start", enabled: true, announcePhases: true)
+            bar.update(0.5, label: "Transcribing")
+        }
+        XCTAssertFalse(output.contains("Transcribing…"), output)
+    }
+
     func testDownloadLabelStatesTheSize() {
         // A multi-gigabyte download should never begin unannounced.
         XCTAssertEqual(ProgressBar.downloadLabel("large-v3", megabytes: 3_090), "large-v3 (3.09 GB)")
