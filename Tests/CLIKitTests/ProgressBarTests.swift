@@ -47,7 +47,7 @@ final class ProgressBarTests: XCTestCase {
 
     func testEnabledBarWritesToStderrNotStdout() {
         let output = capturingStderr {
-            let bar = ProgressBar(label: "Working", enabled: true)
+            let bar = ProgressBar(label: "Working", drawing: true, announcing: false)
             bar.update(0.5)
             bar.clearLine()
         }
@@ -59,7 +59,7 @@ final class ProgressBarTests: XCTestCase {
         // A progress callback can fire hundreds of times a second; only whole
         // percent changes are worth a redraw.
         let output = capturingStderr {
-            let bar = ProgressBar(label: "W", enabled: true)
+            let bar = ProgressBar(label: "W", drawing: true, announcing: false)
             for _ in 0..<200 { bar.update(0.42) }
             bar.clearLine()
         }
@@ -68,7 +68,7 @@ final class ProgressBarTests: XCTestCase {
 
     func testProgressIsClampedToRange() {
         let output = capturingStderr {
-            let bar = ProgressBar(label: "W", enabled: true)
+            let bar = ProgressBar(label: "W", drawing: true, announcing: false)
             bar.update(-5)
             bar.update(99)
             bar.clearLine()
@@ -79,20 +79,14 @@ final class ProgressBarTests: XCTestCase {
 
     // MARK: Phase announcements
 
-    func testPhasesAreSilentByDefaultWhenDrawingIsOff() {
-        // The default must not change what 74 existing tools already print.
-        let output = capturingStderr {
-            let bar = ProgressBar(label: "start", enabled: false)
-            bar.update(0.1, label: "Installing model")
-            bar.update(0.5, label: "Transcribing")
-        }
-        XCTAssertEqual(output, "")
-    }
+    // These run under `swift test`, where stderr is NOT a terminal — which is
+    // exactly the case the rework is about.
 
-    func testAnnouncedPhasesWriteOneLineEach() {
-        // A long silent phase is indistinguishable from a hang in a log.
+    func testAPipedRunReportsPhasesInsteadOfNothing() {
+        // The bug: this used to emit zero bytes, which is what a hung process
+        // emits too.
         let output = capturingStderr {
-            let bar = ProgressBar(label: "start", enabled: false, announcePhases: true)
+            let bar = ProgressBar(label: "start")
             bar.update(0, label: "Installing model")
             bar.update(0.5, label: "Transcribing")
         }
@@ -100,11 +94,34 @@ final class ProgressBarTests: XCTestCase {
         XCTAssertTrue(output.contains("Transcribing…"), output)
     }
 
+    func testQuietIsStillSilent() {
+        // `enabled: false` is --quiet and must mean nothing at all, in any
+        // medium. The whole rework is worthless if it makes --quiet chatty.
+        let output = capturingStderr {
+            let bar = ProgressBar(label: "start", enabled: false)
+            bar.update(0, label: "Installing model")
+            bar.update(0.5, label: "Transcribing")
+        }
+        XCTAssertEqual(output, "")
+    }
+
+    func testEnabledTrueDoesNotForceABarIntoAPipe() {
+        // Passing `true` says "report", not "draw". Carriage returns in a log
+        // are the thing rule 2 exists to prevent, and a caller asking for
+        // output should not be able to ask for that by accident.
+        let output = capturingStderr {
+            let bar = ProgressBar(label: "start", enabled: true)
+            bar.update(0.5, label: "Transcribing")
+        }
+        XCTAssertFalse(output.contains("\r"), output)
+        XCTAssertTrue(output.contains("Transcribing…"), output)
+    }
+
     func testOnlyAChangeAnnounces() {
         // The callback behind this fires hundreds of times a second; the point
         // is a legible log, not a flood.
         let output = capturingStderr {
-            let bar = ProgressBar(label: "start", enabled: false, announcePhases: true)
+            let bar = ProgressBar(label: "start")
             for step in 0...100 {
                 bar.update(Double(step) / 100, label: "Transcribing")
             }
@@ -112,13 +129,15 @@ final class ProgressBarTests: XCTestCase {
         XCTAssertEqual(output.components(separatedBy: "Transcribing").count - 1, 1, output)
     }
 
-    func testAnnouncementsDoNotFireWhenTheBarIsDrawing() {
-        // A terminal gets the bar; a log gets the lines. Never both.
+    func testAFractionWithNoLabelSaysNothing() {
+        // Phase lines are keyed to the label; a bare fraction has no phase to
+        // report and must not produce a line per call.
         let output = capturingStderr {
-            let bar = ProgressBar(label: "start", enabled: true, announcePhases: true)
-            bar.update(0.5, label: "Transcribing")
+            let bar = ProgressBar(label: "start")
+            bar.update(0.1)
+            bar.update(0.9)
         }
-        XCTAssertFalse(output.contains("Transcribing…"), output)
+        XCTAssertEqual(output, "")
     }
 
     func testDownloadLabelStatesTheSize() {

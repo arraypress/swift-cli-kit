@@ -14,8 +14,15 @@
 //
 //  2. **It draws only to a terminal.** When stderr is redirected — CI, a log
 //     file, a subprocess — carriage returns produce thousands of lines of
-//     half-overwritten bar. Off by default in that case; a caller who wants
-//     periodic lines in a log can ask for them.
+//     half-overwritten bar.
+//
+//  3. **But redirected is not the same as silent.** For a long time rule 2 was
+//     implemented as "produce nothing at all", and that turned out to be the
+//     worse failure: a tool in a long silent phase is byte-for-byte
+//     indistinguishable from a tool that has hung. `transcribe` looked frozen
+//     for ten minutes while a speech model installed, because stderr was a
+//     pipe. So `enabled` now says WHETHER to report, and the terminal decides
+//     HOW: a redrawn bar for a person, one line per phase change for a log.
 //
 
 import Foundation
@@ -35,8 +42,9 @@ public final class ProgressBar: @unchecked Sendable {
     /// What the bar is measuring.
     private var label: String
 
-    /// Whether drawing is possible at all.
-    private let enabled: Bool
+    /// Whether a redrawn bar is possible — stderr is a terminal and the caller
+    /// wants output.
+    private let drawing: Bool
 
     /// Whether phase changes are announced as plain lines when drawing is off.
     private let announcePhases: Bool
@@ -57,19 +65,35 @@ public final class ProgressBar: @unchecked Sendable {
     ///
     /// - Parameters:
     ///   - label: Shown to the left of the bar.
-    ///   - enabled: Defaults to "stderr is a terminal". Pass `false` for
-    ///     `--quiet`.
-    ///   - announcePhases: When drawing is off, still write ONE line each time
-    ///     the label changes. This is the "periodic lines in a log" the header
-    ///     note above promises and nothing could previously ask for. Without
-    ///     it, a long silent phase — a first-run model download, say — is
-    ///     indistinguishable from a hang to CI, to an agent, or to anyone
-    ///     piping the output. `transcribe` looked frozen for ten minutes that
-    ///     way. Defaults to `false` so no existing tool changes behaviour.
-    public init(label: String, enabled: Bool? = nil, announcePhases: Bool = false) {
+    ///   - enabled: Whether to report progress AT ALL. `false` is `--quiet`
+    ///     and means silence. `true` or `nil` mean "report", and the medium is
+    ///     chosen from the terminal: a redrawn bar when stderr is a TTY, one
+    ///     plain line per phase change when it is not.
+    ///
+    ///     Note what this is NOT: passing `true` does not force a bar into a
+    ///     pipe. Nobody wants carriage returns in a log, so that decision
+    ///     stays with the terminal and only the question "say anything?" is
+    ///     the caller's. The older reading — `enabled: !quiet &&
+    ///     stderrIsTTY` — collapsed the two questions into one and made every
+    ///     piped run mute.
+    public convenience init(label: String, enabled: Bool? = nil) {
+        let wanted = enabled ?? true
+        self.init(label: label,
+                  drawing: wanted && Terminal.stderrIsTTY,
+                  announcing: wanted && !Terminal.stderrIsTTY)
+    }
+
+    /// The designated initialiser, with both decisions already made.
+    ///
+    /// Internal because the public API deliberately does not let a caller draw
+    /// a bar into a pipe. The test suite runs with stderr redirected, so
+    /// without this seam the drawing path could not be exercised at all — and
+    /// a redraw that nobody tests is a redraw that smears the day someone
+    /// resizes their window.
+    init(label: String, drawing: Bool, announcing: Bool) {
         self.label = label
-        self.enabled = enabled ?? Terminal.stderrIsTTY
-        self.announcePhases = announcePhases
+        self.drawing = drawing
+        self.announcePhases = announcing
     }
 
     // MARK: Drawing
@@ -79,7 +103,7 @@ public final class ProgressBar: @unchecked Sendable {
     /// Rounded to whole percent before comparing, so a callback firing hundreds
     /// of times a second still only redraws a hundred times.
     public func update(_ fraction: Double, label: String? = nil) {
-        guard enabled else {
+        guard drawing else {
             announce(label)
             return
         }
@@ -104,7 +128,7 @@ public final class ProgressBar: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        if enabled { clear() }
+        if drawing { clear() }
         if let message { Terminal.writeError(message) }
     }
 
@@ -113,7 +137,7 @@ public final class ProgressBar: @unchecked Sendable {
     public func clearLine() {
         lock.lock()
         defer { lock.unlock() }
-        if enabled { clear() }
+        if drawing { clear() }
     }
 
     /// Writes one line for a phase the caller has just entered.
