@@ -39,6 +39,21 @@ public struct Change: Codable, Equatable, Hashable, Sendable {
         /// Considered and left alone. Worth recording: "nothing to do" and "did nothing by
         /// mistake" look identical in a log that omits it.
         case unchanged
+
+        /// What a plan says it will do — "would **delete** x".
+        ///
+        /// The raw value is the past tense, which is right for a receipt and wrong for a
+        /// plan: "would deleted x" is what you get without this.
+        var future: String {
+            switch self {
+            case .created: return "create"
+            case .updated: return "update"
+            case .deleted: return "delete"
+            case .moved: return "move"
+            case .renamed: return "rename"
+            case .unchanged: return "leave alone"
+            }
+        }
     }
 
     public let kind: Kind
@@ -66,14 +81,21 @@ public struct Change: Codable, Equatable, Hashable, Sendable {
     }
 
     /// A line a person can read.
-    public var summary: String {
+    ///
+    /// - Parameter future: whether this is something that will happen rather than something
+    ///   that did, which decides the tense of the verb.
+    public func summary(future: Bool = false) -> String {
+        let verb = future ? kind.future : kind.rawValue
         switch (from, to) {
-        case let (from?, to?): return "\(kind.rawValue) \(subject): \(from) → \(to)"
-        case let (nil, to?): return "\(kind.rawValue) \(subject) → \(to)"
-        case let (from?, nil): return "\(kind.rawValue) \(subject) (was \(from))"
-        case (nil, nil): return "\(kind.rawValue) \(subject)"
+        case let (from?, to?): return "\(verb) \(subject): \(from) → \(to)"
+        case let (nil, to?): return "\(verb) \(subject) → \(to)"
+        case let (from?, nil): return "\(verb) \(subject) (was \(from))"
+        case (nil, nil): return "\(verb) \(subject)"
         }
     }
+
+    /// A line a person can read, in the past tense.
+    public var summary: String { summary() }
 }
 
 /// What a command did, or would do.

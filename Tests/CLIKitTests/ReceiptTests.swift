@@ -14,6 +14,17 @@ import XCTest
 
 final class ChangeTests: XCTestCase {
 
+    func testAPlanUsesTheFutureTense() {
+        // "would deleted x" is what you get from reusing the past-tense raw value.
+        XCTAssertEqual(Change(.deleted, subject: "a").summary(future: true), "delete a")
+        XCTAssertEqual(Change(.renamed, subject: "a", to: "b").summary(future: true),
+                       "rename a → b")
+        XCTAssertEqual(Change(.unchanged, subject: "a").summary(future: true), "leave alone a")
+        for kind in Change.Kind.allCases {
+            XCTAssertFalse(kind.future.hasSuffix("ed"), "\(kind) reads as past tense")
+        }
+    }
+
     func testEachShapeReadsAsASentence() {
         XCTAssertEqual(Change(.created, subject: "718").summary, "created 718")
         XCTAssertEqual(Change(.deleted, subject: "718", from: "Notes").summary,
@@ -73,7 +84,7 @@ final class ReceiptTests: XCTestCase {
     func testTheTextRenderingSaysWhetherItHappened() {
         let change = [Change(.deleted, subject: "718", from: "Notes")]
         XCTAssertEqual(ReceiptPayload(receipt(change, planned: true)).renderText(),
-                       "would deleted 718 (was Notes)")
+                       "would delete 718 (was Notes)")
         XCTAssertEqual(ReceiptPayload(receipt(change)).renderText(), "deleted 718 (was Notes)")
         XCTAssertEqual(ReceiptPayload(receipt([], planned: true)).renderText(), "delete: nothing to do")
         XCTAssertEqual(ReceiptPayload(receipt([])).renderText(), "delete: nothing changed")
@@ -191,5 +202,50 @@ final class MutatingCommandTests: XCTestCase {
             // receipt for something that did not happen would be the worse lie.
             XCTAssertEqual(Ledger.shared.applied, 1)
         }
+    }
+}
+
+private struct FakeConfirmed: MutatingCommand {
+    static let serviceID = "fake"
+    static let actionName = "burn"
+
+    @Flag(name: .long) var yes: Bool = false
+    @OptionGroup var common: CommonOptions
+    @OptionGroup var write: WriteOptions
+
+    /// "Show it unless confirmed" — the policy `dupe delete` has.
+    var isPlanOnly: Bool { write.dryRun || !yes }
+
+    func plan() async throws -> [Change] {
+        Ledger.shared.planned += 1
+        return [Change(.deleted, subject: "a")]
+    }
+
+    func apply(_ plan: [Change]) async throws -> [Change] {
+        Ledger.shared.applied += 1
+        return plan
+    }
+}
+
+final class PlanOnlyOverrideTests: XCTestCase {
+
+    override func setUp() { super.setUp(); Ledger.shared.reset() }
+
+    func testAToolCanRequireConfirmationInsteadOfAFlag() async throws {
+        // Without --yes this shows the plan and changes nothing, and the shared flow is what
+        // enforces it — so the tool does not grow a second dry run beside --dry-run.
+        var showing = try FakeConfirmed.parse(["--quiet"])
+        try await showing.execute()
+        XCTAssertEqual(Ledger.shared.applied, 0)
+
+        var acting = try FakeConfirmed.parse(["--yes", "--quiet"])
+        try await acting.execute()
+        XCTAssertEqual(Ledger.shared.applied, 1)
+    }
+
+    func testDryRunStillWinsOverConfirmation() async throws {
+        var command = try FakeConfirmed.parse(["--yes", "--dry-run", "--quiet"])
+        try await command.execute()
+        XCTAssertEqual(Ledger.shared.applied, 0, "--dry-run was overridden by --yes")
     }
 }

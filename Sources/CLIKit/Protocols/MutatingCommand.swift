@@ -31,6 +31,13 @@ public protocol MutatingCommand: CLICommand {
     var common: CommonOptions { get }
     var write: WriteOptions { get }
 
+    /// Whether this run should stop after planning.
+    ///
+    /// Defaults to `--dry-run`. A tool whose policy is "show it unless confirmed" — `dupe
+    /// delete` acts only with `--yes` — overrides this so the shared flow still governs,
+    /// rather than growing a second dry run beside the first.
+    var isPlanOnly: Bool { get }
+
     /// What this WOULD change. Must not change anything.
     ///
     /// Called for a dry run and for a real one both, so the plan a caller is shown is the
@@ -47,11 +54,13 @@ public protocol MutatingCommand: CLICommand {
 
 public extension MutatingCommand {
 
+    var isPlanOnly: Bool { write.dryRun }
+
     /// Plan, apply unless asked not to, and emit the receipt.
     func execute() async throws {
         let planned = try await plan()
 
-        if write.dryRun {
+        if isPlanOnly {
             let receipt = Receipt(tool: Self.serviceID, action: Self.actionName,
                                   planned: true, changes: planned)
             try write.save(receipt, service: Self.serviceID)
@@ -91,7 +100,8 @@ public struct ReceiptPayload: Encodable, TextRenderable {
         guard !changes.isEmpty else {
             return planned ? "\(action): nothing to do" : "\(action): nothing changed"
         }
-        let prefix = planned ? "would " : ""
-        return changes.map { "\(prefix)\($0.summary)" }.joined(separator: "\n")
+        return changes.map {
+            planned ? "would " + $0.summary(future: true) : $0.summary
+        }.joined(separator: "\n")
     }
 }
