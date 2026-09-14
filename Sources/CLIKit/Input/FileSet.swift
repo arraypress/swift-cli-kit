@@ -31,12 +31,17 @@ public enum FileSet {
     /// - Throws: ``CLIError`` when a path does not exist. A typo that silently
     ///   matches nothing is worse than a refusal, because the run reports
     ///   success over an empty set.
+    ///   - includingHidden: Whether to descend into dot-folders. Off by
+    ///     default, because a sweep that wandered into `.git` would be
+    ///     surprising — but configuration lives in `.github`, `.circleci` and
+    ///     `.config`, so a tool that reads configuration has to ask for them.
     public static func gather(
         _ paths: [String],
         matching extensions: Set<String>,
-        recursive: Bool = false
+        recursive: Bool = false,
+        includingHidden: Bool = false
     ) throws -> [URL] {
-        try gather(paths, matching: .some(extensions), recursive: recursive)
+        try gather(paths, matching: .some(extensions), recursive: recursive, includingHidden: includingHidden)
     }
 
     /// Every regular file under the given paths, whatever its extension.
@@ -46,15 +51,17 @@ public enum FileSet {
     /// drop the very files the caller wants looked at.
     public static func gatherAll(
         _ paths: [String],
-        recursive: Bool = false
+        recursive: Bool = false,
+        includingHidden: Bool = false
     ) throws -> [URL] {
-        try gather(paths, matching: nil, recursive: recursive)
+        try gather(paths, matching: nil, recursive: recursive, includingHidden: includingHidden)
     }
 
     private static func gather(
         _ paths: [String],
         matching extensions: Set<String>?,
-        recursive: Bool
+        recursive: Bool = false,
+        includingHidden: Bool = false
     ) throws -> [URL] {
         var found: [URL] = []
         let manager = FileManager.default
@@ -71,8 +78,8 @@ public enum FileSet {
                 continue
             }
 
-            let options: FileManager.DirectoryEnumerationOptions =
-                recursive ? [.skipsHiddenFiles] : [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+            var options: FileManager.DirectoryEnumerationOptions = includingHidden ? [] : [.skipsHiddenFiles]
+            if !recursive { options.insert(.skipsSubdirectoryDescendants) }
             guard let walker = manager.enumerator(
                 at: url, includingPropertiesForKeys: [.isRegularFileKey], options: options
             ) else { continue }
