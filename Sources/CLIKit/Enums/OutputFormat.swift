@@ -25,8 +25,27 @@ public enum OutputFormat: String, Sendable, CaseIterable {
     /// RFC 4180 comma-separated values, with a header row.
     case csv
 
+    /// Tab-separated values, with a header row.
+    ///
+    /// The clipboard format: a spreadsheet pastes tab-separated text straight
+    /// into cells, where pasted CSV lands in a single column and has to be
+    /// run through an import dialog. `tool --tsv | pb copy` is one step.
+    case tsv
+
     /// A GitHub-flavoured Markdown table.
     case markdown
+
+    /// An HTML table, for a report that is going to be opened in a browser
+    /// or pasted into a document.
+    case html
+
+    /// Whether this format renders as a table of rows rather than as records.
+    public var isTabular: Bool {
+        switch self {
+        case .csv, .tsv, .markdown, .html: true
+        case .json, .ndjson, .text: false
+        }
+    }
 
     /// Picks a format, honouring an explicit choice and otherwise inferring one
     /// from whether stdout is a terminal.

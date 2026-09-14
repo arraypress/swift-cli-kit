@@ -86,7 +86,7 @@ public struct Emitter: Sendable {
         switch format {
         case .text:
             Terminal.writeLine(value.renderText())
-        case .csv, .markdown:
+        case .csv, .tsv, .markdown, .html:
             let data = try encoder.encode(value)
             Terminal.write(Table(from: applyFieldFilter(to: data)).render(as: format))
         case .json:
@@ -106,7 +106,7 @@ public struct Emitter: Sendable {
         switch format {
         case .text:
             for value in values { Terminal.writeLine(value.renderText()) }
-        case .csv, .markdown:
+        case .csv, .tsv, .markdown, .html:
             let data = try encoder.encode(values)
             Terminal.write(Table(from: applyFieldFilter(to: data)).render(as: format))
         case .ndjson:
@@ -190,7 +190,7 @@ public struct Emitter: Sendable {
         switch format {
         case .text:
             for value in values { Terminal.writeLine(value.renderText()) }
-        case .csv, .markdown:
+        case .csv, .tsv, .markdown, .html:
             let data = try encoder.encode(values)
             Terminal.write(Table(from: applyFieldFilter(to: data)).render(as: format))
         case .ndjson:

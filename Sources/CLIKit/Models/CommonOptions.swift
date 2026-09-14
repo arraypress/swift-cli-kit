@@ -32,8 +32,14 @@ public struct CommonOptions: ParsableArguments {
     @Flag(name: .long, help: "Emit CSV with a header row.")
     public var csv: Bool = false
 
+    @Flag(name: .long, help: "Emit tab-separated values, ready to paste into a spreadsheet.")
+    public var tsv: Bool = false
+
     @Flag(name: .long, help: "Emit a Markdown table.")
     public var markdown: Bool = false
+
+    @Flag(name: .long, help: "Emit an HTML table.")
+    public var html: Bool = false
 
     @Option(
         name: .long,
@@ -57,7 +63,9 @@ public struct CommonOptions: ParsableArguments {
     /// The resolved output format, honouring the explicit flags.
     public var format: OutputFormat {
         if csv { return .csv }
+        if tsv { return .tsv }
         if markdown { return .markdown }
+        if html { return .html }
         if ndjson { return .ndjson }
         if json { return .json }
         if text { return .text }
@@ -71,9 +79,11 @@ public struct CommonOptions: ParsableArguments {
 
     /// Rejects mutually exclusive format flags.
     public func validate() throws {
-        let chosen = [json, text, ndjson, csv, markdown].filter { $0 }.count
+        let chosen = [json, text, ndjson, csv, tsv, markdown, html].filter { $0 }.count
         if chosen > 1 {
-            throw ValidationError("Pass at most one of --json, --text, --ndjson, --csv, --markdown.")
+            throw ValidationError(
+                "Pass at most one of --json, --text, --ndjson, --csv, --tsv, --markdown, --html."
+            )
         }
     }
 }

@@ -291,7 +291,7 @@ The security gap is also narrower than it looks: the login keychain is unlocked 
 | A pipe | Compact JSON |
 | A terminal | Readable text |
 
-Overridable with `--json`, `--text`, `--ndjson`, `--csv`, `--markdown`.
+Overridable with `--json`, `--text`, `--ndjson`, `--csv`, `--tsv`, `--markdown`, `--html`.
 
 In text mode, list results render as an **aligned table** for payloads adopting `TableRenderable`:
 
@@ -304,7 +304,11 @@ LaOUkDBDjW8  Rick Astley - Dance (Live at The O2, London, 2…  3:54    20K view
 
 The table fits the terminal by shrinking the **widest flexible column only** — a type declares which columns may shorten, so an identifier stays copyable while a title gives up its space. Widths are measured in display cells rather than characters, so emoji and CJK don't misalign every row after them. Adoption is opt-in: a community post or a comment is a paragraph, and forcing one into a column would truncate the only part that matters.
 
-`--csv` and `--markdown` flatten records into a table. Columns are the **union** of keys across every record, sorted — so a record missing an optional field can't shorten the table or shift other rows into the wrong columns. Nested arrays and objects are JSON-encoded into their cell rather than dropped, because a dense cell is recoverable and a missing one isn't. CSV follows RFC 4180 (CRLF, doubled quotes); Markdown escapes pipes and folds newlines to `<br>` so one cell can't break a row. Keys are sorted so output is byte-stable across runs, and piped JSON is compact — for a caller paying by the token, pretty-printing whitespace is pure cost.
+`--csv`, `--tsv`, `--markdown` and `--html` flatten records into a table. Columns are the **union** of keys across every record, sorted — so a record missing an optional field can't shorten the table or shift other rows into the wrong columns. Nested arrays and objects are JSON-encoded into their cell rather than dropped, because a dense cell is recoverable and a missing one isn't. CSV follows RFC 4180 (CRLF, doubled quotes); Markdown escapes pipes and folds newlines to `<br>` so one cell can't break a row; HTML is an escaped fragment that drops into a page that already has a stylesheet. Keys are sorted so output is byte-stable across runs, and piped JSON is compact — for a caller paying by the token, pretty-printing whitespace is pure cost.
+
+**`--tsv` is the clipboard format.** A spreadsheet pastes tab-separated text straight into cells, where pasted CSV lands in one column and needs an import dialog — so `tool --tsv | pb copy` is the whole of "put this folder in Excel". TSV has no quoting convention, so a cell carrying a tab or a newline loses it rather than silently becoming two columns. Both it and CSV defuse spreadsheet formula injection: a leading `=`, `+`, `@` or `-` is prefixed with an apostrophe unless the cell is a plain number, because the clipboard route into a spreadsheet is exactly as executable as the file route.
+
+**`DocumentTable` is not `TextTable`.** `TextTable` measures the terminal and shortens flexible columns to fit, which is right for a person reading a result and wrong for a document. A listing saved beside the files it describes, printed, or mailed has no terminal and must not lose a character to one — so `DocumentTable` pads to the widest cell, rules off the header, right-aligns the columns you mark numeric, and never truncates anything.
 
 ```swift
 struct MoviePayload: Codable, TextRenderable {

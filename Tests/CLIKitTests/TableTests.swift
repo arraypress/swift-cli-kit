@@ -175,4 +175,100 @@ final class TableTests: XCTestCase {
         XCTAssertTrue(md.contains("| A | B |"))
         XCTAssertTrue(md.contains("| 1 | 2 |"))
     }
+    // MARK: - TSV
+
+    func testTSVIsTabSeparatedWithAHeader() {
+        let out = table("""
+        [{"name": "a.jpg", "size": "5 MB"}, {"name": "b.jpg", "size": "12 MB"}]
+        """).render(as: .tsv)
+
+        XCTAssertEqual(out, "name\tsize\na.jpg\t5 MB\nb.jpg\t12 MB\n")
+    }
+
+    /// TSV has no quoting convention: a spreadsheet treats every tab as a
+    /// column break and every newline as a row break, full stop. A cell
+    /// carrying either has to lose it, or one value silently becomes two
+    /// columns and the rest of the row shifts.
+    func testTSVFlattensTheCharactersThatCarryStructure() {
+        let out = table("""
+        [{"note": "first\\nsecond", "other": "a\\tb"}]
+        """).render(as: .tsv)
+
+        let lines = out.split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines.count, 2, "the embedded newline must not have made a third row")
+        XCTAssertEqual(lines[1].split(separator: "\t").count, 2, "nor the embedded tab a third column")
+        XCTAssertTrue(out.contains("first second"))
+        XCTAssertTrue(out.contains("a b"))
+    }
+
+    /// The clipboard route into a spreadsheet is exactly as executable as the
+    /// file route.
+    func testTSVDefusesFormulaInjection() {
+        let out = table("""
+        [{"cell": "=SUM(A1:A9)"}]
+        """).render(as: .tsv)
+        XCTAssertTrue(out.contains("'=SUM(A1:A9)"))
+    }
+
+    func testNegativeNumbersAreNotDefused() {
+        // A minus sign starts a formula, but it also starts every negative
+        // number, and quoting those would break a numeric column on import.
+        XCTAssertEqual(Table.defused("-42"), "-42")
+        XCTAssertEqual(Table.defused("-42.5"), "-42.5")
+        XCTAssertEqual(Table.defused("-cmd"), "'-cmd")
+    }
+
+    // MARK: - HTML
+
+    func testHTMLIsATableFragment() {
+        let out = table("""
+        [{"name": "a.jpg", "size": "5 MB"}]
+        """).render(as: .html)
+
+        XCTAssertTrue(out.hasPrefix("<table>"))
+        XCTAssertTrue(out.contains("<th>name</th><th>size</th>"))
+        XCTAssertTrue(out.contains("<td>a.jpg</td><td>5 MB</td>"))
+        XCTAssertTrue(out.contains("</table>"))
+        XCTAssertFalse(out.contains("<html>"), "a fragment, so it drops into a page that has one")
+    }
+
+    /// Cells carry scraped content by design, so a value containing a tag has
+    /// to arrive as text rather than as markup.
+    func testHTMLEscapesEveryCell() {
+        let out = table("""
+        [{"payload": "<script>alert('x')</script> & \\"quoted\\""}]
+        """).render(as: .html)
+
+        XCTAssertFalse(out.contains("<script>"))
+        XCTAssertTrue(out.contains("&lt;script&gt;"))
+        XCTAssertTrue(out.contains("&amp;"))
+        XCTAssertTrue(out.contains("&quot;"))
+        XCTAssertTrue(out.contains("&#39;"))
+    }
+
+    func testHTMLEscapesHeadingsToo() {
+        let out = Table.render(columns: ["<b>"], rows: [["x"]], as: .html)
+        XCTAssertTrue(out.contains("<th>&lt;b&gt;</th>"))
+    }
+
+    // MARK: - Formats
+
+    func testTabularFormatsAreMarkedAsSuch() {
+        XCTAssertTrue(OutputFormat.csv.isTabular)
+        XCTAssertTrue(OutputFormat.tsv.isTabular)
+        XCTAssertTrue(OutputFormat.markdown.isTabular)
+        XCTAssertTrue(OutputFormat.html.isTabular)
+        XCTAssertFalse(OutputFormat.json.isTabular)
+        XCTAssertFalse(OutputFormat.text.isTabular)
+    }
+
+    func testEveryTabularFormatRendersSomething() {
+        let t = table("""
+        [{"a": "1", "b": "2"}]
+        """)
+        for format in OutputFormat.allCases where format.isTabular {
+            XCTAssertFalse(t.render(as: format).isEmpty, "\(format.rawValue) rendered nothing")
+        }
+    }
+
 }

@@ -130,7 +130,9 @@ public struct Table {
         guard !columns.isEmpty else { return "" }
         switch format {
         case .csv: return renderCSV()
+        case .tsv: return renderTSV()
         case .markdown: return renderMarkdown()
+        case .html: return renderHTML()
         default: return ""
         }
     }
@@ -144,22 +146,95 @@ public struct Table {
         return out
     }
 
-    /// Quotes a field when it contains a delimiter, quote, or line break, and
-    /// defuses formula injection.
+    /// Quotes a field when it contains a delimiter, quote, or line break.
     private static func csvField(_ value: String) -> String {
-        // A leading =, +, @, - or tab makes a spreadsheet *execute* the cell
-        // rather than display it, and these cells carry scraped web content by
-        // design. A leading apostrophe forces text mode; plain numbers are left
-        // alone so numeric columns keep importing as numbers.
-        var field = value
-        if let first = field.first, first == "=" || first == "+" || first == "@" || first == "-" || first == "\t",
-           Double(field) == nil {
-            field = "'" + field
-        }
+        let field = defused(value)
         guard field.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n" || $0 == "\r" }) else {
             return field
         }
         return "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+    }
+
+    /// Defuses spreadsheet formula injection.
+    ///
+    /// A leading =, +, @, - or tab makes a spreadsheet *execute* the cell
+    /// rather than display it, and these cells carry scraped web content by
+    /// design. A leading apostrophe forces text mode; plain numbers are left
+    /// alone so numeric columns keep importing as numbers.
+    ///
+    /// Shared by CSV and TSV: the clipboard route into a spreadsheet is
+    /// exactly as executable as the file route, and a guard on only one of
+    /// them is a guard on neither.
+    static func defused(_ value: String) -> String {
+        guard let first = value.first,
+              first == "=" || first == "+" || first == "@" || first == "-" || first == "\t",
+              Double(value) == nil
+        else { return value }
+        return "'" + value
+    }
+
+    /// Tab-separated, one record per line.
+    ///
+    /// There is no quoting convention in TSV — a spreadsheet reading a pasted
+    /// block treats every tab as a column break and every newline as a row
+    /// break, full stop. So a cell containing either has to lose it, or one
+    /// value silently becomes two columns and the rest of the row shifts.
+    private func renderTSV() -> String {
+        var out = columns.map(Self.tsvField).joined(separator: "\t") + "\n"
+        for row in rows {
+            out += columns.map { Self.tsvField(row[$0] ?? "") }.joined(separator: "\t") + "\n"
+        }
+        return out
+    }
+
+    /// Flattens the two characters that carry structure, and defuses formula
+    /// injection the same way CSV does.
+    private static func tsvField(_ value: String) -> String {
+        var field = Self.defused(value)
+        field = field.replacingOccurrences(of: "\r\n", with: " ")
+        field = field.replacingOccurrences(of: "\n", with: " ")
+        field = field.replacingOccurrences(of: "\r", with: " ")
+        field = field.replacingOccurrences(of: "\t", with: " ")
+        return field
+    }
+
+    /// An HTML table with a header row.
+    ///
+    /// A fragment rather than a document: it drops into a report, an email or
+    /// a page that already has a stylesheet, and a caller who wants a whole
+    /// file can wrap it in one.
+    private func renderHTML() -> String {
+        var out = "<table>\n<thead>\n<tr>"
+        out += columns.map { "<th>\(Self.escaped($0))</th>" }.joined()
+        out += "</tr>\n</thead>\n<tbody>\n"
+        for row in rows {
+            out += "<tr>"
+            out += columns.map { "<td>\(Self.escaped(row[$0] ?? ""))</td>" }.joined()
+            out += "</tr>\n"
+        }
+        out += "</tbody>\n</table>\n"
+        return out
+    }
+
+    /// Escapes the five characters that would otherwise be markup.
+    ///
+    /// Cells carry scraped web content by design, so a value containing a tag
+    /// has to arrive as text. Quotes are escaped too: this fragment may be
+    /// pasted inside an attribute by whatever assembles the page.
+    static func escaped(_ value: String) -> String {
+        var out = ""
+        out.reserveCapacity(value.count)
+        for character in value {
+            switch character {
+            case "&": out += "&amp;"
+            case "<": out += "&lt;"
+            case ">": out += "&gt;"
+            case "\"": out += "&quot;"
+            case "'": out += "&#39;"
+            default: out.append(character)
+            }
+        }
+        return out
     }
 
     /// A GitHub-flavoured Markdown table.
