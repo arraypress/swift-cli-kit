@@ -126,4 +126,10 @@ public extension CLIError {
     static func wrapping(_ error: Error, service: String? = nil) -> CLIError {
         ErrorRendering.classify(error, service: service)
     }
+
+    /// The same error with what it's about in front of the message —
+    /// `photo.png: contains no image` — keeping its code and hint.
+    func prefixed(_ subject: String) -> CLIError {
+        CLIError(code: code, message: "\(subject): \(message)", hint: hint, service: service)
+    }
 }

@@ -90,6 +90,26 @@ final class CLIErrorConvertibleTests: XCTestCase {
         XCTAssertNil(CLIError.wrapping(ReaderError.diskFull).hint)
     }
 
+    private enum PlainError: Error, CustomStringConvertible, CLIErrorConvertible {
+        case emptyText
+        var description: String { "the text is empty" }
+        var cliErrorCode: CLIError.Code { .usage }
+    }
+
+    func testADescribedErrorKeepsItsOwnWords() {
+        let error = CLIError.wrapping(PlainError.emptyText)
+        XCTAssertEqual(error.message, "the text is empty")
+        XCTAssertEqual(error.code, .usage)
+    }
+
+    func testPrefixedKeepsTheCodeAndHint() {
+        let error = CLIError.wrapping(ReaderError.notAnImage, service: "img").prefixed("photo.png")
+        XCTAssertEqual(error.message, "photo.png: photo.png contains no image")
+        XCTAssertEqual(error.code, .parseFailure)
+        XCTAssertEqual(error.hint, "is it really a PNG?")
+        XCTAssertEqual(error.service, "img")
+    }
+
     func testAnUnknownErrorStillFallsBackToUpstream() {
         XCTAssertEqual(CLIError.wrapping(UnknownError()).code, .upstream)
     }

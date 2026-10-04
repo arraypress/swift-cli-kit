@@ -43,7 +43,11 @@ enum ErrorRendering {
         if let cliError = error as? CLIError { return cliError }
 
         if let coded = error as? CLIErrorConvertible {
-            return CLIError(code: coded.cliErrorCode, message: error.localizedDescription,
+            // Many library errors describe themselves through description rather
+            // than LocalizedError, and localizedDescription would bury that under
+            // "The operation couldn't be completed".
+            let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            return CLIError(code: coded.cliErrorCode, message: message,
                             hint: coded.cliErrorHint, service: service)
         }
 

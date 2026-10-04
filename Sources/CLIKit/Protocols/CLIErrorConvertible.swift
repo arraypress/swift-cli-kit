@@ -31,7 +31,8 @@ import Foundation
 /// }
 /// ```
 ///
-/// The message is the error's `localizedDescription`.
+/// The message is the error's `errorDescription` when it is a
+/// `LocalizedError`, and its `description` otherwise.
 public protocol CLIErrorConvertible: Error {
 
     /// The code this error leaves with.
