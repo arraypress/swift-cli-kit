@@ -37,7 +37,7 @@ These are a public contract. Append new ones; never renumber.
 | `3` | Auth required | Run the `hint` command |
 | `4` | Rate limited | Back off and retry |
 | `5` | Upstream/network failure | Retry later |
-| `6` | Parse failure | Upgrade the tool — the site changed |
+| `6` | Parse failure | Upgrade the tool — the site changed. For a local tool: the file or text given can't be read, so check it; retrying won't help |
 
 The `1` / `6` split is the one that matters most. "This video has no transcript" and "our extractor broke" both look like a missing result, but the first means stop and the second means file a bug.
 
@@ -47,6 +47,22 @@ yt-fetch transcript "$URL" || case $? in
   4) sleep 60 ;;
   6) brew upgrade yt-fetch ;;
 esac
+```
+
+A library's own error type is unknown to CLIKit, so `CLIError.wrapping` falls
+back to `5` — retry — which is wrong for a file that isn't an image or text that
+isn't a date. Libraries don't depend on CLIKit, so the tool conforms the
+library's error to `CLIErrorConvertible` and names the code itself:
+
+```swift
+extension ImageForgeError: CLIErrorConvertible {
+    public var cliErrorCode: CLIError.Code {
+        switch self {
+        case .unreadable: .parseFailure
+        case .writeFailed: .upstream
+        }
+    }
+}
 ```
 
 A closed pipe is part of the contract too. When the downstream reader stops

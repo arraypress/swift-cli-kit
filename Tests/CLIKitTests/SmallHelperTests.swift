@@ -52,3 +52,45 @@ final class SmallHelperTests: XCTestCase {
         XCTAssertEqual(error.cliMessage, "the disk is full")
     }
 }
+
+final class CLIErrorConvertibleTests: XCTestCase {
+
+    private enum ReaderError: Error, LocalizedError, CLIErrorConvertible {
+        case notAnImage, diskFull
+
+        var errorDescription: String? {
+            switch self {
+            case .notAnImage: "photo.png contains no image"
+            case .diskFull: "the disk is full"
+            }
+        }
+
+        var cliErrorCode: CLIError.Code {
+            switch self {
+            case .notAnImage: .parseFailure
+            case .diskFull: .upstream
+            }
+        }
+
+        var cliErrorHint: String? { self == .notAnImage ? "is it really a PNG?" : nil }
+    }
+
+    private struct UnknownError: Error {}
+
+    func testAConvertibleErrorNamesItsOwnCode() {
+        let error = CLIError.wrapping(ReaderError.notAnImage, service: "img")
+        XCTAssertEqual(error.code, .parseFailure)
+        XCTAssertEqual(error.code.exitCode.rawValue, 6)
+        XCTAssertEqual(error.message, "photo.png contains no image")
+        XCTAssertEqual(error.hint, "is it really a PNG?")
+        XCTAssertEqual(error.service, "img")
+    }
+
+    func testTheHintIsOptional() {
+        XCTAssertNil(CLIError.wrapping(ReaderError.diskFull).hint)
+    }
+
+    func testAnUnknownErrorStillFallsBackToUpstream() {
+        XCTAssertEqual(CLIError.wrapping(UnknownError()).code, .upstream)
+    }
+}
