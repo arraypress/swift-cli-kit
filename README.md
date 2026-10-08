@@ -421,6 +421,29 @@ Terminal.writeError("wrote " + "page".counted(pages))   // 1 page, 3 pages
 failures.append((input, error.cliMessage)) // a CLIError's message, else localizedDescription
 ```
 
+## Releasing a Tool
+
+Every CLI releases the same way, and the steps live here rather than in 123
+copies. A tool carries two short files that never change:
+
+- `Scripts/build-release.sh` resolves the package and hands over to
+  [`Scripts/build-cli-release.sh`](Scripts/build-cli-release.sh) in its CLIKit
+  checkout — build, bundle the resource `.bundle`s, strip, ad-hoc sign, check
+  the arch and that `--version` matches the tag, run `--help` and
+  `describe --json`, generate completions, package, print the sha256. The
+  script is pinned by the tool's `Package.resolved`, like the library.
+- `.github/workflows/release.yml` calls
+  [`release-cli.yml`](.github/workflows/release-cli.yml) on a `v*` tag push:
+  test, run the build, attach the archive to the GitHub release. This repo is
+  public so private tools can call it with no organisation setting;
+  `secrets: inherit` passes `DEPS_TOKEN` for tools with a private library.
+
+What is the tool's own sits beside them, sourced by the shared script:
+`Scripts/smoke.sh` for its release checks (with `status` and `expect`
+provided — `expect 2 send` asserts an exit code) and `Scripts/stage.sh` for
+anything extra the archive must carry. The binary's name is the package's one
+executable product.
+
 ## Requirements
 
 - macOS 14+ on Apple silicon

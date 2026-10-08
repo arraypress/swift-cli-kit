@@ -1,0 +1,128 @@
+name: Release CLI
+
+# The release job every CLI in the fleet runs, called from each tool's own
+# .github/workflows/release.yml:
+#
+#     jobs:
+#       release:
+#         uses: arraypress/swift-cli-kit/.github/workflows/release-cli.yml@main
+#         with:
+#           version: ${{ inputs.version }}
+#         permissions:
+#           contents: write
+#         secrets: inherit
+#
+# Cutting a release is a tag push. The binary is built on Apple silicon runners
+# and attached to the GitHub release; the Homebrew formula points at that asset
+# rather than building from source, which would make every `brew install`
+# compile the whole dependency graph.
+#
+# This file lives in a PUBLIC repo on purpose: a private repo can call a
+# reusable workflow from a public one with no organisation setting, and the
+# tools are private.
+#
+# The build itself is the tool's `Scripts/build-release.sh`, which hands over
+# to CLIKit's Scripts/build-cli-release.sh at the version the tool resolves —
+# so a release here and one cut by hand on a Mac run the same steps.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to build, without the leading v. Empty on a tag push: the tag is used."
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  release:
+    # Apple silicon runner — these tools are arm64 only.
+    #
+    # macos-26, not macos-15: the older image selects Xcode 16 / Swift 6.1, and
+    # the MLX graph refuses to resolve against it — mlx-swift declares tools
+    # version 6.3.0 and mlx-audio-swift 6.2.0. It fails at dependency
+    # resolution, before a line is compiled. macos-26 defaults to Xcode 26.6.
+    runs-on: macos-26
+
+    permissions:
+      contents: write
+
+    # `secrets` is NOT available in an `if:` condition — using it there is a
+    # workflow PARSE error, which GitHub reports as a failed run with zero
+    # jobs, on every push, including pushes that should not trigger this
+    # workflow at all. Lifting it into env makes it readable from `if:`.
+    env:
+      DEPS_TOKEN: ${{ secrets.DEPS_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # SwiftPM clones dependencies over HTTPS with no credentials, so a
+      # PRIVATE arraypress library fails with "could not read Username for
+      # https://github.com" before a line is compiled. GITHUB_TOKEN cannot fix
+      # it: that token is scoped to THIS repo and cannot read another private
+      # one. A fine-grained PAT with read access to the library repos, stored
+      # as the DEPS_TOKEN secret, can — and `secrets: inherit` in the caller is
+      # what passes it through to here.
+      #
+      # Guarded so the step is a no-op when the secret is absent — a repo whose
+      # dependencies are all public still builds with nothing configured.
+      - name: Authenticate private dependencies
+        if: ${{ env.DEPS_TOKEN != '' }}
+        run: |
+          git config --global \
+            url."https://x-access-token:${DEPS_TOKEN}@github.com/".insteadOf \
+            "https://github.com/"
+
+      - name: Resolve version
+        id: version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          if [ -n "$REQUESTED" ]; then
+            echo "value=$REQUESTED" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test
+        run: swift test
+
+      - name: Build release binary
+        run: bash Scripts/build-release.sh "${{ steps.version.outputs.value }}"
+
+      # The tool's name is read off the archive the build produced, so the
+      # caller never states it and cannot state it wrongly.
+      - name: Record checksum
+        id: checksum
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          ARCHIVE="$(ls dist/*-"$VERSION"-macos-arm64.tar.gz)"
+          NAME="$(basename "$ARCHIVE")"
+          echo "tool=${NAME%-"$VERSION"-macos-arm64.tar.gz}" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "$ARCHIVE" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Stated rather than inferred. On a tag push the action can read the
+          # tag off github.ref, but on workflow_dispatch that ref is the branch
+          # and the action stops with "GitHub Releases requires a tag". Naming
+          # it from the resolved version makes both entry points behave the
+          # same, and round-trips: v1.2.3 → 1.2.3 → v1.2.3.
+          tag_name: v${{ steps.version.outputs.value }}
+          files: ${{ steps.checksum.outputs.archive }}
+          generate_release_notes: true
+          body: |
+            Install:
+
+            ```sh
+            brew install arraypress/tap/${{ steps.checksum.outputs.tool }}
+            ```
+
+            `sha256` for the Homebrew formula:
+
+            ```
+            ${{ steps.checksum.outputs.sha256 }}
+            ```
