@@ -352,6 +352,19 @@ try common.emitter.emitAll(payloads)  // array, or NDJSON lines
 
 Diagnostics, warnings and prompts all go to **stderr**, so piping stdout into a parser never has to strip chatter.
 
+### Warnings, bare values and Ctrl-C
+
+- `common.warn("…")` writes `warning: …` to stderr and stays silent under
+  `--quiet`, the flag's documented job; `Terminal.warn` is the same for code
+  with no options in reach. Never write to `FileHandle.standardError` directly.
+- A verb whose answer is one value (`gen password`, `ua string`) prints it
+  bare even when piped, and the document only when a format is asked for by
+  name: `if common.namesStructuredFormat { emit } else { print the value }`.
+  `common.namedFormat` is the format a flag named, or `nil`.
+- `await Interrupt.wait(timeout:)` waits for Ctrl-C, SIGTERM or the timeout,
+  then keeps both ignored while the caller finalises. `Interrupt.onFirst { … }`
+  runs a handler on the first Ctrl-C (a second exits 130).
+
 ## Cache
 
 ```swift

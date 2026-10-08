@@ -62,6 +62,17 @@ public struct CommonOptions: ParsableArguments {
 
     /// The resolved output format, honouring the explicit flags.
     public var format: OutputFormat {
+        namedFormat ?? OutputFormat.resolve(explicit: nil)
+    }
+
+    /// The format a flag asked for by name, or `nil` when none was given and
+    /// the format comes from whether stdout is a terminal.
+    ///
+    /// The distinction matters to a verb whose answer is one value —
+    /// `gen password`, `ua string`, `lock` — which prints that value bare even
+    /// when piped, because `… | pbcopy` wants the value and not a document
+    /// around it. Only a format named on purpose earns the structured form.
+    public var namedFormat: OutputFormat? {
         if csv { return .csv }
         if tsv { return .tsv }
         if markdown { return .markdown }
@@ -69,7 +80,13 @@ public struct CommonOptions: ParsableArguments {
         if ndjson { return .ndjson }
         if json { return .json }
         if text { return .text }
-        return OutputFormat.resolve(explicit: nil)
+        return nil
+    }
+
+    /// Whether a structured format — anything but `--text` — was asked for
+    /// by name. The test a bare-value verb makes before printing a document.
+    public var namesStructuredFormat: Bool {
+        namedFormat.map { $0 != .text } ?? false
     }
 
     /// An emitter configured from these options.
