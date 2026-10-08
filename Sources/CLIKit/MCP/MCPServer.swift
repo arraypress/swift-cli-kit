@@ -238,7 +238,7 @@ public struct MCPServer: Sendable {
         let succeeded = result.exitCode == 0
         let text = succeeded
             ? result.stdout
-            : (result.stderr.nilIfEmpty ?? "exit \(result.exitCode)")
+            : (result.stderr.nilIfBlank ?? "exit \(result.exitCode)")
 
         return encode(result: [
             "content": [["type": "text", "text": text]],

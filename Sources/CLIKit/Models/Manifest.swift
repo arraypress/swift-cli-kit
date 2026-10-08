@@ -133,8 +133,8 @@ public extension Manifest {
 
         return Manifest(
             tool: dump.command.commandName,
-            summary: dump.command.abstract?.nilIfEmpty,
-            details: dump.command.discussion?.nilIfEmpty,
+            summary: dump.command.abstract?.nilIfBlank,
+            details: dump.command.discussion?.nilIfBlank,
             version: version,
             service: service,
             requiresAuth: requiresAuth,
@@ -169,8 +169,8 @@ public extension Manifest {
                 Manifest.Command(
                     path: path,
                     invocation: ([root] + path).joined(separator: " "),
-                    summary: node.abstract?.nilIfEmpty,
-                    details: node.discussion?.nilIfEmpty,
+                    summary: node.abstract?.nilIfBlank,
+                    details: node.discussion?.nilIfBlank,
                     arguments: (node.arguments ?? [])
                         .filter { $0.shouldDisplay != false }
                         .compactMap(Manifest.Argument.init)
@@ -233,8 +233,8 @@ extension Manifest.Argument {
         self.kind = info.kind
         self.required = !(info.isOptional ?? true)
         self.repeating = info.isRepeating ?? false
-        self.summary = info.abstract?.nilIfEmpty
-        self.defaultValue = info.defaultValue?.nilIfEmpty
+        self.summary = info.abstract?.nilIfBlank
+        self.defaultValue = info.defaultValue?.nilIfBlank
 
         // Falls back to scraping "(values: a, b)" out of help text for builds
         // that record the choices nowhere structured.

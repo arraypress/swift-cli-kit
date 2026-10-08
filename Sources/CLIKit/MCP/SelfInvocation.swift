@@ -89,7 +89,7 @@ enum SelfInvocation {
         guard result.exitCode == 0, !result.stdout.isEmpty else {
             throw CLIError.parseFailure(
                 "Could not read this tool's own command tree"
-                    + (result.stderr.nilIfEmpty.map { ": \($0)" } ?? "")
+                    + (result.stderr.nilIfBlank.map { ": \($0)" } ?? "")
             )
         }
         return Data(result.stdout.utf8)

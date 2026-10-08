@@ -18,7 +18,7 @@ extension Manifest {
             dumpHelpJSON: try SelfInvocation.dumpHelp(),
             service: Root.service.id,
             requiresAuth: Root.service.credentials.contains { $0.isRequired },
-            version: Root.configuration.version.nilIfEmpty ?? "0.0.0"
+            version: Root.configuration.version.nilIfBlank ?? "0.0.0"
         )
     }
 }

@@ -7,7 +7,7 @@
 
 import Foundation
 
-extension Array {
+public extension Array {
 
     /// `nil` when the array is empty.
     ///

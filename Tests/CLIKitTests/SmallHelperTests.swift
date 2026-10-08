@@ -21,9 +21,22 @@ final class SmallHelperTests: XCTestCase {
         XCTAssertFalse(" a ".isBlank)
     }
 
-    func testNilIfEmptyAgreesWithIt() {
-        XCTAssertNil("  ".nilIfEmpty)
+    func testNilIfBlankAgreesWithIt() {
+        XCTAssertNil("  ".nilIfBlank)
+        XCTAssertNil("".nilIfBlank)
+        XCTAssertEqual(" a ".nilIfBlank, " a ")
+    }
+
+    func testNilIfEmptyCountsWhitespaceAsContent() {
+        // The name says empty, and the six copies tools carried meant empty.
+        XCTAssertNil("".nilIfEmpty)
+        XCTAssertEqual("  ".nilIfEmpty, "  ")
         XCTAssertEqual(" a ".nilIfEmpty, " a ")
+    }
+
+    func testAnEmptyArrayIsNil() {
+        XCTAssertNil([Int]().nilIfEmpty)
+        XCTAssertEqual([1].nilIfEmpty, [1])
     }
 
     // MARK: - counted

@@ -7,14 +7,15 @@
 
 import Foundation
 
-extension String {
+public extension String {
 
-    /// `nil` when the string is empty or only whitespace.
+    /// `nil` when the string is empty; the string otherwise.
     ///
-    /// Manifest fields are optional in the JSON but arrive as empty strings
-    /// from the parser, and an empty `abstract` should be absent rather than
-    /// present-and-blank.
+    /// For a payload field that is optional in the JSON but arrives as `""`
+    /// from an API — absent reads better than present-and-blank. Six tools
+    /// carried this line privately. Whitespace counts as content here; use
+    /// ``nilIfBlank`` when it should not.
     var nilIfEmpty: String? {
-        isBlank ? nil : self
+        isEmpty ? nil : self
     }
 }
