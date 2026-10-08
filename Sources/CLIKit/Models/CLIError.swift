@@ -115,7 +115,8 @@ public extension CLIError {
     /// Wraps an arbitrary error, mapping well-known network failures onto the
     /// right code so callers still get a meaningful exit status.
     ///
-    /// An error conforming to ``CLIErrorConvertible`` names its own code.
+    /// An error conforming to ``CLIErrorDescribing`` supplies the whole
+    /// error; one conforming to ``CLIErrorConvertible`` names its own code.
     /// Anything else unrecognised becomes ``Code/upstream`` — transient by
     /// assumption, because telling a caller to retry a permanent failure is a
     /// cheaper mistake than telling it to give up on a temporary one.

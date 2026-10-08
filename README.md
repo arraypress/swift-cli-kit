@@ -65,6 +65,18 @@ extension ImageForgeError: CLIErrorConvertible {
 }
 ```
 
+When the tool has more to say than the library — a permission that should name
+the Settings pane, a timeout that should point at the prompt causing it — it
+conforms to `CLIErrorDescribing` instead and supplies the whole error, message
+and hint included. The default `run()` finds either; no tool overrides `run()`
+to translate errors by hand.
+
+```swift
+extension ShortcutsError: @retroactive CLIErrorDescribing {
+    public var cliError: CLIError { Failure.describing(self) }
+}
+```
+
 A closed pipe is part of the contract too. When the downstream reader stops
 early — `yt-fetch … | head -1` — the run ends `0`, not the shell's `141`:
 `CLIRunner` ignores SIGPIPE, and a broken stdout is read as "the caller has

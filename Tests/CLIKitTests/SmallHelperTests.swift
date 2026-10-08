@@ -113,4 +113,27 @@ final class CLIErrorConvertibleTests: XCTestCase {
     func testAnUnknownErrorStillFallsBackToUpstream() {
         XCTAssertEqual(CLIError.wrapping(UnknownError()).code, .upstream)
     }
+
+    private enum GrantError: Error, CLIErrorDescribing {
+        case missing, elsewhere
+        var cliError: CLIError {
+            switch self {
+            case .missing: CLIError(code: .authRequired, message: "no Accessibility grant",
+                                    hint: "System Settings > Privacy & Security > Accessibility")
+            case .elsewhere: CLIError(code: .notFound, message: "gone", service: "other")
+            }
+        }
+    }
+
+    func testADescribingErrorKeepsItsMessageAndHint() {
+        let error = CLIError.wrapping(GrantError.missing, service: "axe")
+        XCTAssertEqual(error.code, .authRequired)
+        XCTAssertEqual(error.message, "no Accessibility grant")
+        XCTAssertEqual(error.hint, "System Settings > Privacy & Security > Accessibility")
+        XCTAssertEqual(error.service, "axe", "the command's service fills a blank one")
+    }
+
+    func testADescribingErrorKeepsItsOwnService() {
+        XCTAssertEqual(CLIError.wrapping(GrantError.elsewhere, service: "axe").service, "other")
+    }
 }

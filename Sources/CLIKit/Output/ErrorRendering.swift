@@ -35,12 +35,18 @@ enum ErrorRendering {
     }
 
     /// Classifies an arbitrary error onto the right ``CLIError`` code.
-    /// A ``CLIErrorConvertible`` error names its own code. Anything else
+    /// A ``CLIErrorDescribing`` error supplies the whole error, a
+    /// ``CLIErrorConvertible`` one names its own code. Anything else
     /// unrecognised becomes upstream — transient by assumption,
     /// because telling a caller to retry a permanent failure is a cheaper
     /// mistake than telling it to give up on a temporary one.
     static func classify(_ error: Error, service: String?) -> CLIError {
         if let cliError = error as? CLIError { return cliError }
+
+        if let described = (error as? CLIErrorDescribing)?.cliError {
+            return CLIError(code: described.code, message: described.message,
+                            hint: described.hint, service: described.service ?? service)
+        }
 
         if let coded = error as? CLIErrorConvertible {
             // Many library errors describe themselves through description rather
