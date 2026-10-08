@@ -33,8 +33,11 @@ public enum DateInput {
     public static func parse(_ value: String, now: Date = Date(), calendar: Calendar = .current) throws -> Date {
         let trimmed = value.trimmingCharacters(in: .whitespaces).lowercased()
 
+        // `-7d` and `7d` are the same span: always back from now. inbox read
+        // them that way before this was shared, and a form that worked stays
+        // working.
         if let unit = trimmed.last, "dwmy".contains(unit),
-           let count = Int(trimmed.dropLast()), count >= 0 {
+           let count = Int(trimmed.dropLast()).map(abs) {
             let component: Calendar.Component = switch unit {
             case "d": .day
             case "w": .weekOfYear

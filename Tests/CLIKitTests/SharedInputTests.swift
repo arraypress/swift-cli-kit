@@ -36,8 +36,17 @@ final class DateInputTests: XCTestCase {
         XCTAssertEqual(calendar.dateComponents([.month], from: months, to: now).month, 6)
     }
 
+    func testASpanIsAlwaysBackwards() throws {
+        let now = Date(timeIntervalSinceReferenceDate: 812_000_000)
+        XCTAssertEqual(try DateInput.parse("-7d", now: now, calendar: calendar),
+                       try DateInput.parse("7d", now: now, calendar: calendar))
+        XCTAssertLessThan(try DateInput.parse("7d", now: now, calendar: calendar), now)
+    }
+
     func testNonsenseIsAUsageError() {
-        for bad in ["next tuesday", "2026-02-30", "26-01-01", "2026-01-xx", "-3d", ""] {
+        // Words are refused rather than guessed at: "yesterday" is one a tool
+        // could guess, and the next one it could not.
+        for bad in ["next tuesday", "yesterday", "2026-02-30", "26-01-01", "2026-01-xx", ""] {
             XCTAssertThrowsError(try DateInput.parse(bad, calendar: calendar), bad) {
                 XCTAssertEqual(($0 as? CLIError)?.code, .usage, bad)
             }
