@@ -426,6 +426,29 @@ a relative or empty value ignored as the specification says — so one
 environment variable moves every tool's state, and a test run never writes
 into a real profile to find out whether saving works.
 
+### Models that fetch themselves
+
+```swift
+static let depth = ModelLocation(
+    service: "img", names: ["img-depth-anything-v2-small-float32.aimodel"], environmentKey: "IMG_DEPTH_MODEL",
+    download: "hf download arraypress/img-depth-anything --local-dir models && img depth install models/…",
+    source: ModelSource(repository: "arraypress/img-depth-anything",
+                        paths: ["img-depth-anything-v2-small-float32.aimodel"], licence: "Apache-2.0"))
+
+let model = try await Self.depth.obtain(explicit: modelPath, quiet: common.quiet)
+```
+
+`obtain` looks where `resolve` looks — the path for this run, the environment
+variable, Application Support — and, when the model is nowhere and the
+location has a `source`, fetches it from that public Hugging Face repository
+into Application Support first. Every file is checked against the hash the
+repository publishes (SHA-256 for large files, the git blob hash for small
+ones), and nothing is moved into place until all of it has arrived, so a
+download cut off halfway leaves no half-model behind. Progress goes to stderr:
+one line redrawn on a terminal, a line per tenth through a pipe. A path named
+for the run is never replaced by a download, and `NO_MODEL_DOWNLOAD=1` turns
+fetching off, leaving the old refusal with `download` as its hint.
+
 ### The small things
 
 ```swift
