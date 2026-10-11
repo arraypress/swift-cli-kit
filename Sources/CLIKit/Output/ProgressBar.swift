@@ -36,7 +36,8 @@ import Foundation
 /// ```
 ///
 /// Safe to use unconditionally: when stderr is not a terminal, every method is
-/// a no-op apart from ``finish(_:)``, which still writes its summary line.
+/// a no-op apart from ``finish(_:)``, which still writes its summary line —
+/// unless the bar was made with `enabled: false`, which means silence.
 public final class ProgressBar: @unchecked Sendable {
 
     /// What the bar is measuring.
@@ -129,7 +130,10 @@ public final class ProgressBar: @unchecked Sendable {
         defer { lock.unlock() }
 
         if drawing { clear() }
-        if let message { Terminal.writeError(message) }
+        // Quiet (`enabled: false`) means silence: no bar AND no summary. A
+        // bar that is merely not on a terminal still announces, so a pipe
+        // still gets the summary line.
+        if let message, drawing || announcePhases { Terminal.writeError(message) }
     }
 
     /// Removes the bar without printing anything, for a caller about to write

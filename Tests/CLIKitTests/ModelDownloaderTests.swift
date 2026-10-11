@@ -10,6 +10,7 @@
 //  runs only with CLIKIT_LIVE=1 set.
 //
 
+import os
 import XCTest
 @testable import CLIKit
 
@@ -107,5 +108,60 @@ final class ModelDownloaderTests: XCTestCase {
             XCTAssertLessThan(ContinuousClock.now - cancelled, .seconds(2), "the cancel did not stop the transfer")
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testTheStagingFolderIsNamedForTheModelNotTheRun() {
+        let a = ModelSource(repository: "arraypress/tune-crepe", paths: ["b.aimodel", "a.aimodel"], licence: "MIT")
+        let b = ModelSource(repository: "arraypress/tune-crepe", paths: ["a.aimodel", "b.aimodel"], licence: "MIT")
+        let other = ModelSource(repository: "arraypress/tune-crepe", paths: ["a.aimodel"], licence: "MIT")
+        XCTAssertEqual(ModelDownloader.stagingName(for: a), ModelDownloader.stagingName(for: b), "the same model, the same folder")
+        XCTAssertNotEqual(ModelDownloader.stagingName(for: a), ModelDownloader.stagingName(for: other))
+        XCTAssertTrue(ModelDownloader.stagingName(for: a).hasPrefix(".download-"))
+        XCTAssertFalse(ModelDownloader.isAbandonedStaging(ModelDownloader.stagingName(for: a)), "resumable, so never swept")
+        XCTAssertTrue(ModelDownloader.isAbandonedStaging(".download-\(UUID().uuidString)"), "a pre-0.13.2 run folder")
+        XCTAssertFalse(ModelDownloader.isAbandonedStaging("model.aimodel"))
+    }
+
+    func testOldRunFoldersAreSweptAndResumableOnesKept() throws {
+        let old = root.appendingPathComponent(".download-\(UUID().uuidString)")
+        let source = ModelSource(repository: "arraypress/tune-crepe", paths: ["a.aimodel"], licence: "MIT")
+        let keep = root.appendingPathComponent(ModelDownloader.stagingName(for: source))
+        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: keep, withIntermediateDirectories: true)
+        ModelDownloader.removeAbandonedStaging(in: root)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: keep.path))
+    }
+
+    func testTheServersAnswerDecidesHowToContinue() {
+        XCTAssertEqual(ModelDownloader.continuation(have: 500, status: 206), .append)
+        XCTAssertEqual(ModelDownloader.continuation(have: 500, status: 200), .restart, "Range ignored: start over")
+        XCTAssertEqual(ModelDownloader.continuation(have: 0, status: 200), .restart)
+        XCTAssertEqual(ModelDownloader.continuation(have: 500, status: 416), .complete)
+        XCTAssertEqual(ModelDownloader.continuation(have: 0, status: 206), .fail(206), "a partial answer to a full request")
+        XCTAssertEqual(ModelDownloader.continuation(have: 500, status: 404), .fail(404))
+    }
+
+    func testALiveTransferCutOffHalfwayContinuesWhereItStopped() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CLIKIT_LIVE"] == "1", "set CLIKIT_LIVE=1 to fetch from huggingface.co")
+        let source = ModelSource(repository: "arraypress/stems-mdx", paths: [], licence: "MIT")
+        let url = ModelDownloader.fileURL(source, "stems-mdx23c-instvoc-float16.aimodel/main.mlirb")
+        let destination = root.appendingPathComponent("main.mlirb")
+        let first = Task { try await ModelDownloader.fetch(url, to: destination, service: "test", received: { _ in }) }
+        try await Task.sleep(for: .seconds(2))
+        first.cancel()
+        _ = try? await first.value
+        let kept = ModelDownloader.fileSize(destination)
+        XCTAssertGreaterThan(kept, 0, "what arrived before the cancel is kept")
+        let starts = OSAllocatedUnfairLock<[Int64]>(initialState: [])
+        try await ModelDownloader.fetch(url, to: destination, service: "test", received: { n in starts.withLock { $0.append(n) } })
+        XCTAssertEqual(starts.withLock { $0.first }, kept, "the second run starts from the bytes already there")
+        let entry = ModelDownloader.Entry(type: "file", path: "stems-mdx23c-instvoc-float16.aimodel/main.mlirb", oid: nil,
+                                          size: nil, lfs: try await Self.lfs(of: source, path: "stems-mdx23c-instvoc-float16.aimodel/main.mlirb"))
+        XCTAssertTrue(try ModelDownloader.verify(destination, against: entry), "the stitched file matches the published SHA-256")
+    }
+
+    private static func lfs(of source: ModelSource, path: String) async throws -> ModelDownloader.Entry.LFS? {
+        try await ModelDownloader.listing(of: source, service: "test").first { $0.path == path }?.lfs
     }
 }

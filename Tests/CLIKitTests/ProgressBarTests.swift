@@ -37,12 +37,19 @@ final class ProgressBarTests: XCTestCase {
         XCTAssertTrue(output.isEmpty, "drew: \(output.debugDescription)")
     }
 
-    func testFinishMessageSurvivesEvenWhenDisabled() {
-        // The summary is the part worth keeping in a log.
-        let output = capturingStderr {
+    func testFinishMessageReachesALogButNotAQuietRun() {
+        // The summary is the part worth keeping in a log: a bar that is only
+        // off a terminal (announcing) still writes it…
+        let logged = capturingStderr {
+            ProgressBar(label: "Working", drawing: false, announcing: true).finish("Done in 3s")
+        }
+        XCTAssertEqual(logged, "Done in 3s\n")
+        // …but `enabled: false` is --quiet, and quiet means silence. imagine
+        // 0.1.0 printed "1 picture" under --quiet because this wrote anyway.
+        let quiet = capturingStderr {
             ProgressBar(label: "Working", enabled: false).finish("Done in 3s")
         }
-        XCTAssertEqual(output, "Done in 3s\n")
+        XCTAssertTrue(quiet.isEmpty, "quiet wrote: \(quiet.debugDescription)")
     }
 
     func testEnabledBarWritesToStderrNotStdout() {
