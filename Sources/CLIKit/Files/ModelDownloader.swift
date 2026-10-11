@@ -16,6 +16,7 @@
 
 import CryptoKit
 import Foundation
+import os
 
 /// Downloads models from public Hugging Face repositories.
 public enum ModelDownloader {
@@ -151,41 +152,45 @@ public enum ModelDownloader {
     }
 
     /// One file, to a path, reporting the bytes received every half second
-    /// so a multi-gigabyte weight file does not read as a hang.
+    /// so a multi-gigabyte weight file does not read as a hang. Cancelling
+    /// the calling task cancels the transfer.
     static func fetch(_ url: URL, to destination: URL, service: String,
                       received: @escaping @Sendable (Int64) -> Void) async throws {
-        let box = TaskBox()
+        let progress = TaskWatch()
         let watcher = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                if let task = box.task { received(task.countOfBytesReceived) }
+                try? await Task.sleep(for: .milliseconds(500))
+                if let task = progress.task { received(task.countOfBytesReceived) }
             }
         }
         defer { watcher.cancel() }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let task = URLSession.shared.downloadTask(with: url) { temporary, response, error in
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                guard let temporary, error == nil, status == 200 else {
-                    let why = error?.localizedDescription ?? "HTTP \(status)"
-                    continuation.resume(throwing: CLIError.upstream("Fetching \(url.lastPathComponent) failed: \(why)",
-                                                                    service: service))
-                    return
-                }
-                do {
-                    try? FileManager.default.removeItem(at: destination)
-                    try FileManager.default.moveItem(at: temporary, to: destination)
-                    continuation.resume()
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-            box.task = task
-            task.resume()
+        let temporary: URL, response: URLResponse
+        do {
+            (temporary, response) = try await URLSession.shared.download(from: url, delegate: progress)
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch {
+            throw CLIError.upstream("Fetching \(url.lastPathComponent) failed: \(error.localizedDescription)",
+                                    service: service)
         }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            try? FileManager.default.removeItem(at: temporary)
+            throw CLIError.upstream("Fetching \(url.lastPathComponent) failed: HTTP \(status)", service: service)
+        }
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.moveItem(at: temporary, to: destination)
     }
 
-    /// Holds the running task for the progress watcher.
-    private final class TaskBox: @unchecked Sendable {
-        var task: URLSessionDownloadTask?
+    /// Hands the running task to the progress watcher: URLSession reports
+    /// it through the task delegate as soon as it exists.
+    private final class TaskWatch: NSObject, URLSessionTaskDelegate, Sendable {
+        private let created = OSAllocatedUnfairLock<URLSessionTask?>(initialState: nil)
+
+        var task: URLSessionTask? { created.withLock { $0 } }
+
+        func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) {
+            created.withLock { $0 = task }
+        }
     }
 }

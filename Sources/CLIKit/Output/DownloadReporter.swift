@@ -10,15 +10,21 @@
 //
 
 import Foundation
+import os
 
 /// Shows a download's progress.
-final class DownloadReporter: @unchecked Sendable {
+final class DownloadReporter: Sendable {
+
+    /// What has been drawn so far — the lock also serialises the writes, so
+    /// progress from several files never interleaves mid-line.
+    private struct Drawn {
+        var lastTenth = -1
+        var inPlace = false
+    }
 
     private let service: String
     private let quiet: Bool
-    private let lock = NSLock()
-    private var lastTenth = -1
-    private var drewInPlace = false
+    private let drawn = OSAllocatedUnfairLock(initialState: Drawn())
 
     init(service: String, quiet: Bool) {
         self.service = service
@@ -28,26 +34,30 @@ final class DownloadReporter: @unchecked Sendable {
     /// Reports an announcement (no fraction) or how far along it is.
     func report(_ line: String, _ fraction: Double?) {
         guard !quiet else { return }
-        lock.lock(); defer { lock.unlock() }
-        guard let fraction else {
-            Terminal.writeError("\(service): \(line)")
-            return
-        }
-        let percent = Int((min(1, max(0, fraction)) * 100).rounded(.down))
-        if Terminal.stderrIsTTY {
-            FileHandle.standardError.write(Data("\r\(service): \(percent)%  \(line)\u{1B}[K".utf8))
-            drewInPlace = true
-        } else if percent / 10 > lastTenth {
-            lastTenth = percent / 10
-            Terminal.writeError("\(service): \(percent)%")
+        let service = service
+        drawn.withLock { drawn in
+            guard let fraction else {
+                Terminal.writeError("\(service): \(line)")
+                return
+            }
+            let percent = Int((min(1, max(0, fraction)) * 100).rounded(.down))
+            if Terminal.stderrIsTTY {
+                FileHandle.standardError.write(Data("\r\(service): \(percent)%  \(line)\u{1B}[K".utf8))
+                drawn.inPlace = true
+            } else if percent / 10 > drawn.lastTenth {
+                drawn.lastTenth = percent / 10
+                Terminal.writeError("\(service): \(percent)%")
+            }
         }
     }
 
     /// Ends the in-place line.
     func finish() {
         guard !quiet else { return }
-        lock.lock(); defer { lock.unlock() }
-        if drewInPlace { FileHandle.standardError.write(Data("\n".utf8)) }
-        Terminal.writeError("\(service): model installed")
+        let service = service
+        drawn.withLock { drawn in
+            if drawn.inPlace { FileHandle.standardError.write(Data("\n".utf8)) }
+            Terminal.writeError("\(service): model installed")
+        }
     }
 }

@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -32,6 +32,14 @@ let package = Package(
             name: "CLIKit",
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            swiftSettings: [
+                // Async functions run on the caller's executor rather than hopping
+                // to the global pool — Swift 6.2's "nonisolated nonsending"
+                // default. It also makes closures like DiskCache.cached's
+                // `produce` nonsending, so a command adopting the same default
+                // can capture itself in them.
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
             ]
         ),
         .executableTarget(

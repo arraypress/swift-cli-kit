@@ -13,7 +13,7 @@ Built for tools whose main caller is an **agent or a script**, not a person. Tha
 - ✂️ **Field selection** — `--fields` narrows any payload, keeping responses cheap
 - 💾 **TTL disk cache** — repeat lookups served locally, off the failure path entirely
 - 📁 **File plumbing** — tilde expansion, input gathering, collision-proof output names and owner-only files, shared instead of reinvented
-- 🍎 **Swift 6** · Apple silicon · macOS 14+ · strict concurrency
+- 🍎 **Swift 6.2** · Apple silicon · macOS 14+ · strict concurrency
 
 ## Installation
 
@@ -483,7 +483,7 @@ executable product.
 ## Requirements
 
 - macOS 14+ on Apple silicon
-- Swift 6.0+
+- Swift 6.2+ (Xcode 26) — the library builds with nonisolated-nonsending async by default
 
 ## Naming Convention
 

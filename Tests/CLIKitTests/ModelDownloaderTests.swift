@@ -87,4 +87,25 @@ final class ModelDownloaderTests: XCTestCase {
         // Nothing half-made is left beside it.
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), ["tune-crepe-tiny-float32.aimodel"])
     }
+
+    func testCancellingStopsALiveTransfer() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CLIKIT_LIVE"] == "1", "set CLIKIT_LIVE=1 to fetch from huggingface.co")
+        // 224 MB: far more than arrives in the second before the cancel.
+        let source = ModelSource(repository: "arraypress/stems-mdx", paths: [], licence: "MIT")
+        let url = ModelDownloader.fileURL(source, "stems-mdx23c-instvoc-float16.aimodel/main.mlirb")
+        let destination = root.appendingPathComponent("main.mlirb")
+        let fetch = Task {
+            try await ModelDownloader.fetch(url, to: destination, service: "test", received: { _ in })
+        }
+        try await Task.sleep(for: .seconds(1))
+        let cancelled = ContinuousClock.now
+        fetch.cancel()
+        do {
+            try await fetch.value
+            XCTFail("the transfer finished despite the cancel")
+        } catch is CancellationError {
+            XCTAssertLessThan(ContinuousClock.now - cancelled, .seconds(2), "the cancel did not stop the transfer")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
 }
