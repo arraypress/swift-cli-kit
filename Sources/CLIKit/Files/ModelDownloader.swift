@@ -95,7 +95,8 @@ public enum ModelDownloader {
     @discardableResult
     public static func download(_ source: ModelSource, into folder: URL, service: String,
                                 progress: @escaping @Sendable (String, Double?) -> Void) async throws -> [URL] {
-        let entries = try await listing(of: source, service: service)
+        let token = try token(for: source, service: service)
+        let entries = try await listing(of: source, service: service, token: token)
         let wanted = files(in: entries, under: source.paths)
         let missing = source.paths.filter { path in !wanted.contains { $0.path == path || $0.path.hasPrefix(path + "/") } }
         guard missing.isEmpty else {
@@ -124,7 +125,8 @@ public enum ModelDownloader {
                 progress("resuming \(entry.path) at \(have.fileSizeText) of \(entry.bytes.fileSizeText)", nil)
             }
             let base = done
-            try await fetch(fileURL(source, entry.path), to: destination, service: service) { received in
+            try await fetch(fileURL(source, entry.path), to: destination, service: service,
+                            token: token, repository: source.repository) { received in
                 progress(entry.path, total > 0 ? Double(base + received) / Double(total) : nil)
             }
             guard try verify(destination, against: entry) else {
@@ -201,14 +203,54 @@ public enum ModelDownloader {
         }
     }
 
+    /// The token a gated source is fetched with; `nil` for a public one.
+    ///
+    /// - Throws: ``CLIError`` (auth, exit 3) when the source is gated and no
+    ///   token is set — the message is how to get one.
+    static func token(for source: ModelSource, service: String,
+                      environment: [String: String] = ProcessInfo.processInfo.environment) throws -> String? {
+        guard source.isGated else { return nil }
+        guard let found = HuggingFaceToken.resolve(environment: environment) else {
+            throw CLIError.authRequired("\(source.repository) is gated: it needs a Hugging Face token with access",
+                                        service: service, hint: HuggingFaceToken.onboarding(for: source.repository))
+        }
+        return found.token
+    }
+
+    /// A refusal of a gated repository as the exit-3 error that says how to
+    /// get in: 401 is a token Hugging Face does not accept, 403 an account
+    /// that has not accepted the licence (or is still waiting for approval).
+    static func accessError(status: Int, repository: String, service: String) -> CLIError? {
+        switch status {
+        case 401:
+            return CLIError.authRequired("huggingface.co did not accept the token for \(repository)",
+                                         service: service, hint: HuggingFaceToken.onboarding(for: repository))
+        case 403:
+            return CLIError.authRequired("No access to \(repository) yet — its licence has not been accepted on this account",
+                                         service: service, hint: HuggingFaceToken.onboarding(for: repository))
+        default:
+            return nil
+        }
+    }
+
+    /// A request carrying the token, when there is one.
+    static func request(_ url: URL, token: String?) -> URLRequest {
+        var request = URLRequest(url: url)
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        return request
+    }
+
     /// The repository's files.
-    static func listing(of source: ModelSource, service: String) async throws -> [Entry] {
+    static func listing(of source: ModelSource, service: String, token: String? = nil) async throws -> [Entry] {
         let url = URL(string: "https://huggingface.co/api/models/\(source.repository)/tree/\(source.revision)?recursive=true")!
         let data: Data, response: URLResponse
-        do { (data, response) = try await URLSession.shared.data(from: url) } catch {
+        do { (data, response) = try await URLSession.shared.data(for: request(url, token: token)) } catch {
             throw CLIError.upstream("Could not reach huggingface.co: \(error.localizedDescription)", service: service)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if source.isGated, let refusal = accessError(status: status, repository: source.repository, service: service) {
+            throw refusal
+        }
         guard status == 200 else {
             throw CLIError.upstream("huggingface.co answered \(status) for \(source.repository)", service: service)
         }
@@ -228,9 +270,12 @@ public enum ModelDownloader {
     /// multi-gigabyte weight file does not read as a hang. Cancelling the
     /// calling task stops the transfer; what arrived is kept for next time.
     static func fetch(_ url: URL, to destination: URL, service: String,
+                      token: String? = nil, repository: String? = nil,
                       received: @escaping @Sendable (Int64) -> Void) async throws {
         let have = fileSize(destination)
-        var request = URLRequest(url: url)
+        // Hugging Face checks the token, then redirects to its CDN with a
+        // signed URL that needs none — measured on a gated repo (sam3).
+        var request = request(url, token: token)
         if have > 0 { request.setValue("bytes=\(have)-", forHTTPHeaderField: "Range") }
         let bytes: URLSession.AsyncBytes, response: URLResponse
         do {
@@ -242,6 +287,9 @@ public enum ModelDownloader {
                                     service: service)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if token != nil, let repository, let refusal = accessError(status: status, repository: repository, service: service) {
+            throw refusal
+        }
         let start: Int64
         switch continuation(have: have, status: status) {
         case .append: start = have

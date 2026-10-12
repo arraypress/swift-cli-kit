@@ -449,6 +449,17 @@ one line redrawn on a terminal, a line per tenth through a pipe. A path named
 for the run is never replaced by a download, and `NO_MODEL_DOWNLOAD=1` turns
 fetching off, leaving the old refusal with `download` as its hint.
 
+A download cut off partway continues where it stopped on the next run (0.13.2).
+**Gated repositories** (0.14) — ones that ask people to accept a licence first — take
+`ModelSource(…, gated: true)`. They are fetched with the person's own token: `$HF_TOKEN`
+(or `HUGGING_FACE_HUB_TOKEN`), then `hf auth login`'s `~/.cache/huggingface/token` (`HF_HOME`
+moves it), then the fleet credential store under `huggingface`/`token` — never an argument.
+No token, a rejected one (401) or an account that has not accepted the licence (403) stops
+with exit 3, and the hint is the way in: the repository's URL, accept, `hf auth login`.
+Hugging Face's file listing is public even for gated repositories; only the files are
+refused. Measured on facebook/sam3: the token reaches the CDN redirect and a cut-off
+3.4 GB file continues.
+
 ### The small things
 
 ```swift
