@@ -33,6 +33,12 @@ public struct MCPCommand<Root: ParsableCommand & ServiceProviding>: ParsableComm
 
     public func run() throws {
         let manifest = try Manifest.forTool(Root.self)
-        MCPServer(manifest: manifest) { SelfInvocation.run($0) }.serve()
+        let warm = (Root.self as? MCPKeepsWarm.Type)?.warmCommands ?? []
+        MCPServer(manifest: manifest) { arguments in
+            if let first = arguments.first, warm.contains(first) {
+                return InProcessInvocation.run(Root.self, arguments)
+            }
+            return SelfInvocation.run(arguments)
+        }.serve()
     }
 }

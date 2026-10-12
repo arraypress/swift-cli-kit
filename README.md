@@ -193,13 +193,23 @@ spoken for.
 { "mcpServers": { "youtube": { "command": "yt-fetch", "args": ["mcp"] } } }
 ```
 
-Four decisions worth knowing:
+Five decisions worth knowing:
 
 - **It re-executes itself per call.** stdout is the protocol channel, so a
   command writing its payload there would corrupt the stream. A subprocess keeps
   them apart and preserves the exit code and stderr envelope exactly as a shell
   caller sees them. The child's stdin is the null device — the protocol stream
   stays the parent's alone.
+- **…unless the tool keeps a command warm** (0.15). A tool that loads a model
+  for a command pays that load on every call under re-execution. Conforming the
+  root to `MCPKeepsWarm` (`static let warmCommands: Set<String> = ["make"]`) runs
+  those commands in the server's own process, stdout captured through
+  `Terminal.capturingStandardOutput`, so a cache the command keeps survives
+  between requests. Such a command must write only through `Terminal`/`Emitter`
+  and be safe to run twice in one process. `imagine` measured: SANA 15.9 s cold,
+  2.9 s warm; FLUX 51.8 s cold, 25.4 s warm.
+- **JSON numbers stay numbers** (0.15). `1` and `0` once reached the command as
+  `true`/`false` (`--seed true`), because a JSON number also casts to `Bool`.
 - **Failures come back as tool content with `isError`, not JSON-RPC errors.** The
   stderr envelope carries the `hint` that lets a model repair itself; a transport
   fault would throw that away.

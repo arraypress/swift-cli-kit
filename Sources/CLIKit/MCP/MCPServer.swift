@@ -319,7 +319,9 @@ public struct MCPServer: Sendable {
     private static func stringify(_ value: Any) -> String {
         switch value {
         case let string as String: return string
-        case let bool as Bool: return bool ? "true" : "false"
+        // No `as Bool` case: JSONSerialization's 1 and 0 are NSNumbers that
+        // also cast to Bool, so `"seed": 1` became `--seed true`. The
+        // CFBoolean check below tells a JSON true from a JSON 1.
         case let number as NSNumber:
             if CFGetTypeID(number) == CFBooleanGetTypeID() {
                 return number.boolValue ? "true" : "false"

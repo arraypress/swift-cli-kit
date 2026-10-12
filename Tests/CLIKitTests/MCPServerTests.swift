@@ -291,6 +291,16 @@ final class MCPServerTests: XCTestCase {
         XCTAssertTrue(recorder.argv.contains("--full"))
     }
 
+    /// JSON 1 and 0 are NSNumbers that also cast to Bool; they must stay numbers.
+    func testOneAndZeroStayNumbers() throws {
+        let recorder = Recorder()
+        let (server, _) = self.server(recorder)
+
+        _ = try call("yt-fetch_search", #"{"query":"swift","limit":1}"#, on: server)
+        let index = try XCTUnwrap(recorder.argv.firstIndex(of: "--limit"))
+        XCTAssertEqual(recorder.argv[index + 1], "1")
+    }
+
     func testNestedCommandPathIsExpanded() throws {
         let recorder = Recorder()
         let (server, _) = self.server(recorder)

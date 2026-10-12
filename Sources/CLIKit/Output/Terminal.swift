@@ -68,9 +68,29 @@ public enum Terminal {
         write(Data(string.utf8))
     }
 
-    /// Writes bytes to standard output.
+    /// Writes bytes to standard output — or, inside ``capturingStandardOutput(_:)``,
+    /// to that capture.
     public static func write(_ data: Data) {
+        if StandardOutputCapture.append(data) { return }
         write(data, to: FileHandle.standardOutput.fileDescriptor, brokenPipeEndsRun: true)
+    }
+
+    /// Runs `body` with everything written through ``write(_:)`` collected
+    /// instead of sent to standard output, and returns it with the result.
+    ///
+    /// For running a command in-process under MCP, where stdout is the
+    /// protocol channel. Only output written through `Terminal` is caught —
+    /// a bare `print` is not — so a tool opts in per command
+    /// (``MCPKeepsWarm``). Not re-entrant: captures do not nest.
+    public static func capturingStandardOutput<T>(_ body: () async throws -> T) async rethrows -> (T, String) {
+        StandardOutputCapture.begin()
+        do {
+            let value = try await body()
+            return (value, StandardOutputCapture.end())
+        } catch {
+            _ = StandardOutputCapture.end()
+            throw error
+        }
     }
 
     /// Writes a line to standard output.
@@ -126,4 +146,31 @@ private func systemWrite(_ descriptor: Int32, _ base: UnsafeRawPointer, _ count:
     #else
     Glibc.write(descriptor, base, count)
     #endif
+}
+
+/// The buffer behind ``Terminal/capturingStandardOutput(_:)``. Writes arrive
+/// from any thread, so it is locked.
+enum StandardOutputCapture {
+    nonisolated(unsafe) private static var buffer: Data?
+    private static let lock = NSLock()
+
+    static func begin() {
+        lock.lock(); defer { lock.unlock() }
+        buffer = Data()
+    }
+
+    static func end() -> String {
+        lock.lock(); defer { lock.unlock() }
+        let text = String(decoding: buffer ?? Data(), as: UTF8.self)
+        buffer = nil
+        return text
+    }
+
+    /// Appends when a capture is open; `false` means write for real.
+    static func append(_ data: Data) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard buffer != nil else { return false }
+        buffer?.append(data)
+        return true
+    }
 }
