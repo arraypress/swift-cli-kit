@@ -42,8 +42,7 @@ public enum ModelDownloader {
 
     /// Whether automatic downloads are allowed in this environment.
     public static func isAllowed(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
-        guard let value = environment[disableKey]?.lowercased(), !value.isEmpty else { return true }
-        return !["1", "true", "yes"].contains(value)
+        !environment.flagIsSet(disableKey)
     }
 
     /// The files of a listing that belong to the paths asked for.

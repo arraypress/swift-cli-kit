@@ -50,6 +50,15 @@ public enum CLIRunner {
         do {
             var command = try root.parseAsRoot()
 
+            // The Mac stays out of idle sleep for exactly as long as the
+            // command runs — see ``KeepAwake`` for the measured reason. `mcp`
+            // holds its own, per call, because it spends its life idle. A
+            // command that throws ends the process, and that releases it too.
+            let token = command is HoldsOwnPowerAssertion ? nil : KeepAwake.hold(KeepAwake.reason(
+                tool: root.configuration.commandName ?? ProcessInfo.processInfo.processName,
+                command: type(of: command).configuration.commandName
+            ))
+
             // Mirrors AsyncParsableCommand.main(): a subcommand may be either
             // kind, and running an async one synchronously would skip its body.
             if var asyncCommand = command as? AsyncParsableCommand {
@@ -57,6 +66,7 @@ public enum CLIRunner {
             } else {
                 try command.run()
             }
+            token?.release()
             exit(CLIExitCode.ok.rawValue)
         } catch {
             // A CLIError thrown by a subcommand that is not a ``CLICommand``

@@ -11,7 +11,7 @@ import ArgumentParser
 import Foundation
 
 /// `<tool> mcp` — serve this tool's commands over the Model Context Protocol.
-public struct MCPCommand<Root: ParsableCommand & ServiceProviding>: ParsableCommand {
+public struct MCPCommand<Root: ParsableCommand & ServiceProviding>: ParsableCommand, HoldsOwnPowerAssertion {
 
     public static var configuration: CommandConfiguration {
         CommandConfiguration(
@@ -35,8 +35,14 @@ public struct MCPCommand<Root: ParsableCommand & ServiceProviding>: ParsableComm
         let manifest = try Manifest.forTool(Root.self)
         let warm = (Root.self as? MCPKeepsWarm.Type)?.warmCommands ?? []
         MCPServer(manifest: manifest) { arguments in
+            // Awake for the call, never while idle on stdin waiting for the
+            // next one: an assertion held for the server's lifetime would keep
+            // a Mac up all night because an agent left its client open. A
+            // subprocess call goes through CLIRunner, which holds its own.
             if let first = arguments.first, warm.contains(first) {
-                return InProcessInvocation.run(Root.self, arguments)
+                return KeepAwake.during(KeepAwake.reason(tool: manifest.tool, command: first)) {
+                    InProcessInvocation.run(Root.self, arguments)
+                }
             }
             return SelfInvocation.run(arguments)
         }.serve()

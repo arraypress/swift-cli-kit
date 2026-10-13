@@ -470,6 +470,19 @@ Hugging Face's file listing is public even for gated repositories; only the file
 refused. Measured on facebook/sam3: the token reaches the CDN redirect and a cut-off
 3.4 GB file continues.
 
+### Staying awake
+
+`CLIRunner` keeps the Mac out of **idle sleep** for exactly as long as a command
+runs — the assertion `caffeinate -i` takes, named after the tool
+(`pmset -g assertions` shows `"imagine make: working"`). The display still
+sleeps and the screen still locks; nothing about the user's power settings
+changes. `mcp` holds one per tool call, never while idle on stdin.
+
+Why: on a Mac with system sleep at one minute, a job started from a background
+shell — which is how agents run things — ran 5 s steps for a minute and then
+crawled at 60–80 s a step through DarkWake windows. `NO_KEEP_AWAKE=1` turns it
+off; `KeepAwake.during("tool: phase") { … }` holds one around any other work.
+
 ### The small things
 
 ```swift
