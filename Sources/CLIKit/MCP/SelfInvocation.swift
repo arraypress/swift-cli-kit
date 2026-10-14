@@ -32,55 +32,23 @@ enum SelfInvocation {
     }
 
     /// Runs the binary with `arguments` and captures its output.
+    ///
+    /// Through ``ChildProcess``: both pipes drained as they fill (a command
+    /// writing more than a pipe buffer would otherwise block for ever), and
+    /// never the parent's stdin — under MCP that is the protocol channel, and
+    /// a child that reads it (`auth login`, or `mcp` itself) would consume
+    /// protocol frames or block on them forever.
     static func run(_ arguments: [String]) -> MCPServer.CommandResult {
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = arguments
-
-        let out = Pipe()
-        let err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
-        // Never the parent's stdin: under MCP that is the protocol channel,
-        // and a child that reads it — `auth login`, or `mcp` itself — would
-        // consume protocol frames or block on them forever.
-        process.standardInput = FileHandle.nullDevice
-
         do {
-            try process.run()
+            let result = try ChildProcess.runBlocking(executableURL, arguments)
+            return MCPServer.CommandResult(stdout: result.stdoutText, stderr: result.stderrText, exitCode: result.status)
         } catch {
             return MCPServer.CommandResult(
                 stdout: "",
-                stderr: "Could not run \(executableURL.path): \(error.localizedDescription)",
+                stderr: "Could not run \(executableURL.path): \(error.reason)",
                 exitCode: CLIExitCode.upstream.rawValue
             )
         }
-
-        // Read before waiting, and drain both pipes concurrently: a command
-        // producing more output than a pipe buffer holds would otherwise block
-        // forever on write while we block on exit — and a child that fills the
-        // stderr pipe before closing stdout would deadlock sequential reads the
-        // same way.
-        let errBuffer = DrainBuffer()
-        let errQueue = DispatchQueue(label: "cli-kit.self-invocation.stderr")
-        let errHandle = err.fileHandleForReading
-        errQueue.async { errBuffer.data = errHandle.readDataToEndOfFile() }
-
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        errQueue.sync {}
-        process.waitUntilExit()
-
-        return MCPServer.CommandResult(
-            stdout: String(decoding: outData, as: UTF8.self),
-            stderr: String(decoding: errBuffer.data, as: UTF8.self),
-            exitCode: process.terminationStatus
-        )
-    }
-
-    /// A byte buffer a background drain fills while this thread reads the other
-    /// pipe. The `sync {}` join orders the write before the read.
-    private final class DrainBuffer: @unchecked Sendable {
-        var data = Data()
     }
 
     /// Reads the command tree as ArgumentParser's dump-help JSON.

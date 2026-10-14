@@ -98,34 +98,20 @@ guard !tools.isEmpty else {
 
 /// Runs `<tool> describe --json` and decodes the manifest.
 func manifest(for tool: String) -> Manifest? {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = [tool, "describe", "--json"]
-
-    let out = Pipe()
-    let err = Pipe()
-    process.standardOutput = out
-    process.standardError = err
-
+    // Both pipes drained as they fill: some manifests run to tens of
+    // kilobytes, and a chatty tool filling stderr first would stall stdout.
+    let result: ChildOutput
     do {
-        try process.run()
+        result = try ChildProcess.runBlocking("/usr/bin/env", [tool, "describe", "--json"], stderr: .none)
     } catch {
         FileHandle.standardError.write(Data("warning: could not run \(tool)\n".utf8))
         return nil
     }
+    let data = result.stdout
 
-    // Read before waiting: a manifest larger than the pipe buffer would
-    // otherwise deadlock, and some of these run to tens of kilobytes. The
-    // stderr drain runs concurrently for the same reason — a chatty tool
-    // filling that pipe first would stall both reads.
-    let errHandle = err.fileHandleForReading
-    DispatchQueue.global().async { _ = errHandle.readDataToEndOfFile() }
-    let data = out.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-
-    guard process.terminationStatus == 0 else {
+    guard result.status == 0, !result.signalled else {
         FileHandle.standardError.write(
-            Data("warning: \(tool) describe exited \(process.terminationStatus) — skipped\n".utf8)
+            Data("warning: \(tool) describe exited \(result.status) — skipped\n".utf8)
         )
         return nil
     }

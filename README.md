@@ -483,6 +483,32 @@ shell — which is how agents run things — ran 5 s steps for a minute and then
 crawled at 60–80 s a step through DarkWake windows. `NO_KEEP_AWAKE=1` turns it
 off; `KeepAwake.during("tool: phase") { … }` holds one around any other work.
 
+### Running other programs
+
+`ChildProcess` (0.17) runs osascript, git, uv or anything else with both output
+streams read as they fill — the one way that cannot stall:
+
+```swift
+let result = try ChildProcess.runBlocking("/usr/bin/git", ["status", "--porcelain"], directory: root)
+guard result.succeeded else { throw … result.stderrText … }
+
+// A long job: progress line by line, only the end of stderr kept, Ctrl-C/cancel stops it.
+let result = try await ChildProcess.run(uv, arguments, environment: env, timeout: 3600,
+                                        stdout: .none, stderr: .lastLines(12),
+                                        onStdout: { line in report(line) })
+```
+
+Arguments are an array, never a shell line; stdin is `/dev/null` unless `input:` is
+given (then written from its own thread); a timeout or a cancelled task sends SIGTERM,
+then SIGKILL after 3 s. Lines end at `\n`, `\r\n` or a progress bar's lone `\r`.
+
+The two traps it replaces, both found in the fleet: reading after `waitUntilExit()` (or
+stdout to its end before stderr) deadlocks once the child writes a pipe buffer — 64 KB —
+that nobody reads; and reading both pipes through `FileHandle.bytes` stalls, because
+Foundation serves every `bytes` sequence from one serial queue (imagine train's progress
+sat unread for half an hour). The tests push 1.4 MB through each stream, interleaved,
+and 2 MB of stderr before any stdout.
+
 ### The small things
 
 ```swift
