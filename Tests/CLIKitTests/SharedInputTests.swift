@@ -62,7 +62,7 @@ final class StampAndSizeTests: XCTestCase {
     }
 
     func testFileSizes() {
-        XCTAssertEqual(0.fileSizeText, ByteCountFormatter.string(fromByteCount: 0, countStyle: .file))
+        XCTAssertEqual(0.fileSizeText, "0 bytes")
         XCTAssertEqual(Int64(21_398).fileSizeText, ByteCountFormatter.string(fromByteCount: 21_398, countStyle: .file))
         XCTAssertEqual(UInt64.max.fileSizeText, ByteCountFormatter.string(fromByteCount: Int64.max, countStyle: .file))
     }
