@@ -484,6 +484,19 @@ until every file checks out, a cut-off file continues, and files already
 installed and matching are returned with no network. `NO_MODEL_DOWNLOAD=1`
 refuses the fetch (exit 1). design's open fonts are the first user.
 
+### Compiled copies of Core AI models (0.19)
+
+```swift
+let freed = CompiledModelCache.removeModel(asset)      // the .aimodel and every compiled copy
+let compiled = CompiledModelCache.bytes(of: asset)     // what the copies take, every program's
+CompiledModelCache.isCompiled(asset, program: "cutout") // whether the next load is quick
+```
+
+The first load of an `.aimodel` in a program compiles it for this Mac into
+`~/Library/Caches/coreai-cache/<OS build>/<program>/<main.hash>/`, one copy per
+program, often as large as the model. A tool's `model remove` should take those
+copies with the model; the next load compiles again.
+
 ### Staying awake
 
 `CLIRunner` keeps the Mac out of **idle sleep** for exactly as long as a command
