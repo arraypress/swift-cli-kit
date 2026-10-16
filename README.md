@@ -470,6 +470,20 @@ Hugging Face's file listing is public even for gated repositories; only the file
 refused. Measured on facebook/sam3: the token reaches the CDN redirect and a cut-off
 3.4 GB file continues.
 
+### Files at a pinned URL (0.18)
+
+```swift
+let files = [PinnedFile(url: URL(string: "https://raw.githubusercontent.com/google/fonts/<commit>/ofl/bebasneue/BebasNeue-Regular.ttf")!,
+                        name: "BebasNeue-Regular.ttf", sha256: "…")]
+let installed = try await PinnedDownload.obtain(files, into: folder, label: "Bebas Neue (OFL-1.1)", service: "design")
+```
+
+For assets that are not on Hugging Face: each file's SHA-256 is measured when
+its URL is chosen and checked when it arrives; nothing is moved into place
+until every file checks out, a cut-off file continues, and files already
+installed and matching are returned with no network. `NO_MODEL_DOWNLOAD=1`
+refuses the fetch (exit 1). design's open fonts are the first user.
+
 ### Staying awake
 
 `CLIRunner` keeps the Mac out of **idle sleep** for exactly as long as a command
