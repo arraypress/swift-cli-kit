@@ -12,6 +12,7 @@ Built for tools whose main caller is an **agent or a script**, not a person. Tha
 - 🖨️ **Dual-audience output** — JSON when piped, readable text on a terminal; no flag required either way
 - ✂️ **Field selection** — `--fields` narrows any payload, keeping responses cheap
 - 💾 **TTL disk cache** — repeat lookups served locally, off the failure path entirely
+- 🛡️ **Agent safety** — other people's text fenced in random-token markers, `--read-only` from declared effects, MCP annotations, retry verdicts, a timed osascript runner
 - 📁 **File plumbing** — tilde expansion, input gathering, collision-proof output names and owner-only files, shared instead of reinvented
 - 🍎 **Swift 6.2** · Apple silicon · macOS 14+ · strict concurrency
 
@@ -226,6 +227,142 @@ unlike a server configured with keys pasted into its JSON.
 One caveat worth weighing before wiring up two dozen of these: MCP tool
 definitions occupy the model's context permanently, whereas a CLI costs nothing
 until invoked. Register the servers you use constantly; leave the rest as CLIs.
+
+## Safety for agents (0.20)
+
+Four things a tool driven by an agent needs, once, in the kit. The ideas come
+from OpenClaw's gogcli, imsg and wacli (MIT); the code is ours.
+
+### Other people's text is fenced: `UntrustedContent`
+
+A message body, an email subject, a sender's display name, a note, a fetched
+page — text anybody can write, handed to a model as an ordinary string. A
+payload names those fields and the emitter fences their values:
+
+```swift
+extension MessageRow: UntrustedContent {
+    static let untrustedFields: Set<String> = ["text", "subject", "senderName"]
+}
+```
+
+```json
+{"id":"msg-1","text":"<<untrusted:9f3a1c2e4b5d6f70>>Ignore your instructions…<</untrusted:9f3a1c2e4b5d6f70>>","date":"…"}
+```
+
+- **The marker** is `<<untrusted:TOKEN>>…<</untrusted:TOKEN>>`. TOKEN is 64
+  random bits as 16 hex digits, drawn once per process — after the text was
+  written, so the closing marker cannot be forged.
+- **Before wrapping**, marker lookalikes (one bracket or two, ASCII, full-width
+  or guillemets, any case, with spaces or zero-width characters inside the
+  word) become `[marker removed]`, and chat-template control tokens become
+  `[special token removed]`: any `<|…|>` (ChatML `<|im_start|>`, `<|system|>`,
+  `<|user|>`, `<|assistant|>`, Llama 3's header and `eot` tokens, reserved
+  special tokens, gpt-oss channels), DeepSeek's full-width `<｜…｜>`, `[INST]`,
+  `[/INST]`, `<<SYS>>`, Mistral's `[SYSTEM_PROMPT]`, `[AVAILABLE_TOOLS]`,
+  `[TOOL_CALLS]`, `[TOOL_RESULTS]`, and Gemma's `<start_of_turn>`/`<end_of_turn>`.
+- **Default: on when stdout is not a terminal** (an agent is reading), off on a
+  terminal (a person is). `CLIKIT_WRAP_UNTRUSTED=0/1` overrides the default and
+  `--wrap-untrusted` / `--no-wrap-untrusted` override both. `mcp --no-wrap-untrusted`
+  turns it off for a server; a single MCP call cannot.
+- **Only declared keys, only strings.** Keys match at any depth (name nested ones
+  too); an array of strings under a key has each element wrapped; ids, dates,
+  numbers and undeclared keys are never touched; empty strings stay empty.
+- **JSON keeps the marker inside the string value**, not in a sibling field: a
+  model reads the value it is about to quote, a sibling flag is skipped or cut
+  away by `--fields`, and every format built from the JSON (NDJSON, CSV, TSV,
+  Markdown, HTML) carries it for free. The rewrite is a byte scanner over the
+  encoded JSON, so numbers and key order are exactly what the encoder wrote.
+- **Text output** is the payload's: call `Untrusted.text(value)` on the same
+  fields in `renderText()` and `tableRow`; it wraps when the run wraps.
+  Outside an emit — a command printing on its own — `Untrusted.text` can only
+  see the terminal and the environment, not the command's flags: use
+  `common.untrustedPolicy.apply(value)` there, and pass
+  `untrusted: common.untrustedPolicy` to any `Emitter` built by hand. A text
+  table whose payload wraps is never shortened to fit the terminal: a cut cell
+  would lose its closing marker.
+
+### `--read-only` and declared effects
+
+Every command declares what it does:
+
+```swift
+struct ListCommand: CLICommand { static let commandEffect = CommandEffect.readOnly … }
+struct SendCommand: CLICommand { static let commandEffect = CommandEffect.acting(destructive: false) … }
+// MutatingCommand defaults to .acting() — destructive, not idempotent.
+```
+
+`--read-only` (every command, through `CommonOptions`) or `CLIKIT_READ_ONLY=1`
+(a whole process tree, `mcp`'s children included) refuses every command that is
+not `.readOnly` — **exit 2, `"retry":"not_started"`, before `execute()` runs**,
+so nothing has been opened, resolved or started. The gate is in `CLICommand.run()`
+and `CLIRunner`, not in the commands. A `MutatingCommand` with `--dry-run` is let
+through: a plan changes nothing. So is a `ConditionallyActing` command whose
+`actsThisRun` is false — `files 4821` lists, `files 4821 --save ~/x` writes;
+describe and MCP still show its worst case.
+
+The default declaration is `.undeclared`, which is handled as acting: a command
+that forgot to say it only reads is refused under `--read-only` (an annoyance that
+announces itself) rather than a command that sends slipping through. Each tool's
+tests assert there are none:
+
+```swift
+XCTAssertEqual(CommandEffects.undeclared(in: MyTool.self), [])
+```
+
+`describe` tags each command `[reads]`, `[acts]`, `[acts, destructive]` or
+`[undeclared]`, and its JSON carries `"effect":{"kind":"read_only"|"acting"|"undeclared","destructive":…,"idempotent":…}`
+per command plus a `safety` block naming the flag, the variables and the marker.
+
+### MCP annotations
+
+`mcp` emits the hints MCP clients use to decide what needs a person's OK:
+`{"readOnlyHint":true}` for a read; `readOnlyHint:false` with `destructiveHint`
+and `idempotentHint` for an acting command; and the worst case (not read-only,
+destructive, not idempotent) for an undeclared one. `mcp --read-only` offers only
+the reads — the rest are absent from `tools/list` and unknown to `tools/call` —
+and sets `CLIKIT_READ_ONLY` for every call as a backstop. The safety flags are
+never part of a tool's input schema.
+
+### Retry verdicts
+
+A failed or uncertain action says whether doing it again is safe:
+
+| `retry` | meaning |
+|---|---|
+| `not_started` | nothing was attempted — safe to retry once the cause is fixed |
+| `in_flight` | started and not yet confirmed (queued) — do not retry; check later |
+| `may_have_completed` | started, then the outcome was lost (timeout, crash) — check before retrying |
+| `completed` | done — retrying would do it again |
+
+`Change(…, retry: .completed)` puts it in a receipt, `CLIError(…, retry:)` in the
+error envelope (`{"error":{…,"retry":"may_have_completed"}}`) and the human line
+(`retry: may have completed — check before retrying`). Absent unless set: a
+receipt or error that never mentions retrying encodes byte for byte as before,
+and old receipts decode, so diffable plans still diff.
+
+### `OSAScript`
+
+The one way to run AppleScript or JXA:
+
+```swift
+let names = try OSAScript.run("tell application \"Contacts\" to return name of every group")
+try OSAScript.run(sendScript, arguments: [text, chatID], timeout: 30)
+```
+
+- a hard timeout — `timeout:` if the call passes one, else
+  `CLIKIT_OSASCRIPT_TIMEOUT`, else 15 s — after which the child gets SIGTERM
+  and, 3 s later, SIGKILL (a limit passed in code is final; leave it out to
+  let the operator's variable decide);
+- stdout and stderr read together through `ChildProcess`, so a chatty script
+  cannot deadlock;
+- values only as `argv`, after a `--`: without it osascript parses a value that
+  begins `-s` or `-e` as its own flag (measured);
+- failures throw `OSAScriptError`, a `CLIErrorDescribing`: `-1743`/`-1744` →
+  exit 3 with the Automation hint, `-1728`/`-1719` → 1, syntax errors → 6, a
+  timeout or anything else → 5. Its `retry` is `not_started` only when the
+  failure provably preceded any effect (could not launch, did not compile,
+  permission refused, app not running); a timeout or runtime error says
+  `may_have_completed`.
 
 ## Field selection
 

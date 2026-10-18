@@ -11,7 +11,9 @@ import ArgumentParser
 import Foundation
 
 /// `<tool> describe` — emit a machine-readable description of the command tree.
-public struct DescribeCommand<Root: ParsableCommand & ServiceProviding>: ParsableCommand {
+public struct DescribeCommand<Root: ParsableCommand & ServiceProviding>: ParsableCommand, EffectDeclaring {
+
+    public static var commandEffect: CommandEffect { .readOnly }
 
     public static var configuration: CommandConfiguration {
         CommandConfiguration(

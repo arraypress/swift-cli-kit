@@ -11,7 +11,10 @@ import ArgumentParser
 import Foundation
 
 /// `<tool> mcp` — serve this tool's commands over the Model Context Protocol.
-public struct MCPCommand<Root: ParsableCommand & ServiceProviding>: ParsableCommand, HoldsOwnPowerAssertion {
+public struct MCPCommand<Root: ParsableCommand & ServiceProviding>: ParsableCommand, HoldsOwnPowerAssertion, EffectDeclaring {
+
+    /// Serving changes nothing; each call is judged by its own command.
+    public static var commandEffect: CommandEffect { .readOnly }
 
     public static var configuration: CommandConfiguration {
         CommandConfiguration(
@@ -31,10 +34,23 @@ public struct MCPCommand<Root: ParsableCommand & ServiceProviding>: ParsableComm
 
     public init() {}
 
+    @Flag(name: .long, help: "Offer only commands that read, and refuse the rest — also CLIKIT_READ_ONLY=1.")
+    var readOnly: Bool = false
+
+    @Flag(name: .long, inversion: .prefixedNo,
+          help: "Mark other people's text as <<untrusted:…>> in every result (default: on).")
+    var wrapUntrusted: Bool?
+
     public func run() throws {
+        // Both travel by environment: it reaches every per-call subprocess and
+        // every in-process call alike, and a call's own arguments cannot undo
+        // it — the schema offers neither flag.
+        if readOnly { setenv(ReadOnlyMode.environmentKey, "1", 1) }
+        if let wrapUntrusted { setenv(UntrustedPolicy.environmentKey, wrapUntrusted ? "1" : "0", 1) }
+
         let manifest = try Manifest.forTool(Root.self)
         let warm = (Root.self as? MCPKeepsWarm.Type)?.warmCommands ?? []
-        MCPServer(manifest: manifest) { arguments in
+        MCPServer(manifest: manifest, readOnly: ReadOnlyMode.isActive()) { arguments in
             // Awake for the call, never while idle on stdin waiting for the
             // next one: an assertion held for the server's lifetime would keep
             // a Mac up all night because an agent left its client open. A

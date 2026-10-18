@@ -17,20 +17,23 @@ import Foundation
 enum ErrorRendering {
 
     /// The JSON envelope written to stderr in machine mode.
-    static func envelope(code: String, message: String, service: String?, hint: String?) -> String {
+    static func envelope(code: String, message: String, service: String?, hint: String?,
+                         retry: String? = nil) -> String {
         var fields: [String] = [
             "\"code\":\(quoted(code))",
             "\"message\":\(quoted(message))",
         ]
         if let service { fields.append("\"service\":\(quoted(service))") }
         if let hint { fields.append("\"hint\":\(quoted(hint))") }
+        if let retry { fields.append("\"retry\":\(quoted(retry))") }
         return "{\"error\":{\(fields.joined(separator: ","))}}"
     }
 
     /// The human-readable form, used when stderr is a terminal.
-    static func human(message: String, hint: String?) -> String {
+    static func human(message: String, hint: String?, retry: String? = nil) -> String {
         var out = "error: \(message)"
         if let hint { out += "\n  hint: \(hint)" }
+        if let retry { out += "\n  retry: \(retry)" }
         return out
     }
 
@@ -45,7 +48,8 @@ enum ErrorRendering {
 
         if let described = (error as? CLIErrorDescribing)?.cliError {
             return CLIError(code: described.code, message: described.message,
-                            hint: described.hint, service: described.service ?? service)
+                            hint: described.hint, service: described.service ?? service,
+                            retry: described.retry)
         }
 
         if let coded = error as? CLIErrorConvertible {

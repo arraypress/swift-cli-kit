@@ -54,6 +54,11 @@ public protocol MutatingCommand: CLICommand {
 
 public extension MutatingCommand {
 
+    /// A command that changes something acts, and may overwrite unless it says
+    /// otherwise. Narrow it — `.acting(destructive: false)` for one that only
+    /// adds — rather than widen it.
+    static var commandEffect: CommandEffect { .acting() }
+
     var isPlanOnly: Bool { write.dryRun }
 
     /// Plan, apply unless asked not to, and emit the receipt.
@@ -87,6 +92,8 @@ public struct ReceiptPayload: Encodable, TextRenderable {
     /// True when nothing was done because `--dry-run` was passed.
     public let planned: Bool
     public let changes: [Change]
+    /// The most cautious verdict among the changes; omitted when none carries one.
+    public let retry: RetryVerdict?
 
     public init(_ receipt: Receipt) {
         tool = receipt.tool
@@ -94,14 +101,16 @@ public struct ReceiptPayload: Encodable, TextRenderable {
         at = receipt.at
         planned = receipt.planned
         changes = receipt.changes
+        retry = receipt.retry
     }
 
     public func renderText() -> String {
         guard !changes.isEmpty else {
             return planned ? "\(action): nothing to do" : "\(action): nothing changed"
         }
-        return changes.map {
-            planned ? "would " + $0.summary(future: true) : $0.summary
+        return changes.map { change in
+            let line = planned ? "would " + change.summary(future: true) : change.summary
+            return change.retry.map { line + " (retry: \($0.summary))" } ?? line
         }.joined(separator: "\n")
     }
 }

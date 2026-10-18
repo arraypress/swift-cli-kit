@@ -59,6 +59,14 @@ public enum CLIRunner {
                 command: type(of: command).configuration.commandName
             ))
 
+            // --read-only / CLIKIT_READ_ONLY. A ``CLICommand`` checks in its
+            // own run(), which also covers MCP's in-process calls; this catches
+            // the rest (auth, cache, a tool's plain ParsableCommand), before
+            // they start. The refusal is a CLIError, reported below: exit 2.
+            if !(command is any CLICommand) {
+                try ReadOnlyMode.check(command)
+            }
+
             // Mirrors AsyncParsableCommand.main(): a subcommand may be either
             // kind, and running an async one synchronously would skip its body.
             if var asyncCommand = command as? AsyncParsableCommand {

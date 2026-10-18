@@ -28,16 +28,22 @@ public struct Emitter: Sendable {
     /// Whether to suppress the stderr warning about an empty field selection.
     public let quiet: Bool
 
+    /// Whether fields a payload declares as other people's text are wrapped
+    /// in `<<untrusted:…>>` markers — see ``UntrustedContent``.
+    public let untrusted: UntrustedPolicy
+
     public init(
         format: OutputFormat,
         fields: [String]? = nil,
         pretty: Bool? = nil,
-        quiet: Bool = false
+        quiet: Bool = false,
+        untrusted: UntrustedPolicy? = nil
     ) {
         self.format = format
         self.fields = fields.map(Self.normalise)
         self.pretty = pretty ?? Terminal.stdoutIsTTY
         self.quiet = quiet
+        self.untrusted = untrusted ?? .resolve()
     }
 
     /// Splits comma-joined field names and trims each one.
@@ -76,6 +82,22 @@ public struct Emitter: Sendable {
         return encoder
     }
 
+    // MARK: Untrusted Content
+
+    /// Encodes `value`, wrapping the fields `T` declares as other people's
+    /// text when this run wraps. Wrapping happens inside the string values,
+    /// so `--fields`, tables and NDJSON all carry it without knowing.
+    private func encoded<T: Encodable>(_ value: T, as type: Any.Type, with encoder: JSONEncoder) throws -> Data {
+        let data = try encoder.encode(value)
+        guard let fields = (type as? UntrustedContent.Type)?.untrustedFields else { return data }
+        return UntrustedJSON.wrap(data, fields: fields, policy: untrusted)
+    }
+
+    /// Renders text with this run's policy visible to ``Untrusted/text(_:)``.
+    private func rendering<R>(_ body: () -> R) -> R {
+        Untrusted.$current.withValue(untrusted, operation: body)
+    }
+
     // MARK: Emitting
 
     /// Writes a single result.
@@ -85,15 +107,15 @@ public struct Emitter: Sendable {
     public func emit<T: Encodable & TextRenderable>(_ value: T) throws {
         switch format {
         case .text:
-            Terminal.writeLine(value.renderText())
+            Terminal.writeLine(rendering { value.renderText() })
         case .csv, .tsv, .markdown, .html:
-            let data = try encoder.encode(value)
+            let data = try encoded(value, as: T.self, with: encoder)
             Terminal.write(Table(from: applyFieldFilter(to: data)).render(as: format))
         case .json:
-            let data = try encoder.encode(value)
+            let data = try encoded(value, as: T.self, with: encoder)
             Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
         case .ndjson:
-            let data = try lineEncoder.encode(value)
+            let data = try encoded(value, as: T.self, with: lineEncoder)
             Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
         }
     }
@@ -105,17 +127,17 @@ public struct Emitter: Sendable {
     public func emitAll<T: Encodable & TextRenderable>(_ values: [T]) throws {
         switch format {
         case .text:
-            for value in values { Terminal.writeLine(value.renderText()) }
+            for value in values { Terminal.writeLine(rendering { value.renderText() }) }
         case .csv, .tsv, .markdown, .html:
-            let data = try encoder.encode(values)
+            let data = try encoded(values, as: T.self, with: encoder)
             Terminal.write(Table(from: applyFieldFilter(to: data)).render(as: format))
         case .ndjson:
             for value in values {
-                let data = try lineEncoder.encode(value)
+                let data = try encoded(value, as: T.self, with: lineEncoder)
                 Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
             }
         case .json:
-            let data = try encoder.encode(values)
+            let data = try encoded(values, as: T.self, with: encoder)
             Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
         }
     }
@@ -135,13 +157,16 @@ public struct Emitter: Sendable {
 
         let (columns, rows, flexible) = select(
             columns: T.tableColumns,
-            rows: values.map(\.tableRow),
+            rows: rendering { values.map(\.tableRow) },
             flexible: T.flexibleColumns
         )
         guard !columns.isEmpty else { return }
 
+        // A shortened cell would lose its closing marker — a fence with no
+        // end is worse than none — so a wrapping run never shortens.
+        let fenced = untrusted.isEnabled && (T.self as? UntrustedContent.Type) != nil
         Terminal.writeLine(
-            TextTable.render(columns: columns, rows: rows, flexible: flexible)
+            TextTable.render(columns: columns, rows: rows, flexible: fenced ? [] : flexible)
         )
     }
 
@@ -189,17 +214,17 @@ public struct Emitter: Sendable {
     private func emitAll<T: Encodable & TextRenderable>(_ values: [T], asNonTable: Void) throws {
         switch format {
         case .text:
-            for value in values { Terminal.writeLine(value.renderText()) }
+            for value in values { Terminal.writeLine(rendering { value.renderText() }) }
         case .csv, .tsv, .markdown, .html:
-            let data = try encoder.encode(values)
+            let data = try encoded(values, as: T.self, with: encoder)
             Terminal.write(Table(from: applyFieldFilter(to: data)).render(as: format))
         case .ndjson:
             for value in values {
-                let data = try lineEncoder.encode(value)
+                let data = try encoded(value, as: T.self, with: lineEncoder)
                 Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
             }
         case .json:
-            let data = try encoder.encode(values)
+            let data = try encoded(values, as: T.self, with: encoder)
             Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
         }
     }

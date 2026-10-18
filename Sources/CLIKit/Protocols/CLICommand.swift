@@ -17,7 +17,7 @@ import Foundation
 /// ``run()`` catches it, writes the envelope to stderr, and exits with the
 /// matching ``CLIExitCode`` — so no individual command has to remember the
 /// mapping, and the mapping cannot drift between tools.
-public protocol CLICommand: AsyncParsableCommand {
+public protocol CLICommand: AsyncParsableCommand, EffectDeclaring {
 
     /// The service this command talks to, e.g. `"youtube"`. Used to tag errors.
     static var serviceID: String { get }
@@ -28,8 +28,15 @@ public protocol CLICommand: AsyncParsableCommand {
 
 public extension CLICommand {
 
+    /// Undeclared until the command says otherwise — see ``EffectDeclaring``
+    /// for why the default fails closed.
+    static var commandEffect: CommandEffect { .undeclared }
+
     func run() async throws {
         do {
+            // Before anything else: a command refused by --read-only must not
+            // have opened a database, resolved a recipient or started an app.
+            try ReadOnlyMode.check(self)
             try await execute()
         } catch let error as ExitCode {
             throw error

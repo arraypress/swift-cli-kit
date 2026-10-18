@@ -62,10 +62,16 @@ public struct MCPServer: Sendable {
 
     private let run: Runner
 
+    /// Whether only read-only commands are offered (`mcp --read-only`, or
+    /// `CLIKIT_READ_ONLY`). The rest are left out of `tools/list` and unknown
+    /// to `tools/call`; each subprocess also refuses them, as a backstop.
+    public let readOnly: Bool
+
     // MARK: Initialisation
 
-    public init(manifest: Manifest, run: @escaping Runner) {
+    public init(manifest: Manifest, readOnly: Bool = false, run: @escaping Runner) {
         self.manifest = manifest
+        self.readOnly = readOnly
         self.run = run
     }
 
@@ -129,6 +135,7 @@ public struct MCPServer: Sendable {
         manifest.commands.filter { command in
             // The root command dispatches to subcommands and does nothing alone.
             guard let first = command.path.first else { return false }
+            if readOnly, command.effect?.isReadOnly != true { return false }
             return !Self.unexposedCommands.contains(first)
         }
     }
@@ -140,8 +147,24 @@ public struct MCPServer: Sendable {
                 "name": Self.toolName(tool: manifest.tool, path: command.path),
                 "description": Self.description(of: command),
                 "inputSchema": Self.inputSchema(for: command),
+                "annotations": Self.annotations(for: command.effect ?? .undeclared),
             ]
         }
+    }
+
+    /// MCP's behaviour hints, from the command's declared effect.
+    ///
+    /// A read says so and nothing else — the other two hints are meaningless
+    /// for it, by the specification. An acting command states all three. An
+    /// undeclared one is described as the worst case — not read-only,
+    /// destructive, not idempotent — so a client asks before calling it.
+    public static func annotations(for effect: CommandEffect) -> [String: Any] {
+        if effect.isReadOnly { return ["readOnlyHint": true] }
+        return [
+            "readOnlyHint": false,
+            "destructiveHint": effect.destructive,
+            "idempotentHint": effect.idempotent,
+        ]
     }
 
     /// A protocol-legal tool name: `[a-zA-Z0-9_-]{1,64}`.
@@ -166,7 +189,7 @@ public struct MCPServer: Sendable {
         var properties: [String: Any] = [:]
         var required: [String] = []
 
-        for argument in command.arguments where !Manifest.formatArguments.contains(argument.name) {
+        for argument in command.arguments where !Manifest.hiddenFromMCP(argument) {
             let key = Self.propertyName(for: argument)
             var schema: [String: Any] = [:]
 
@@ -285,7 +308,7 @@ public struct MCPServer: Sendable {
         // stdout, so it already resolves to JSON); ignoring them here keeps the
         // executor honest to what the schema advertises.
         for argument in command.arguments
-        where argument.kind != "positional" && !Manifest.formatArguments.contains(argument.name) {
+        where argument.kind != "positional" && !Manifest.hiddenFromMCP(argument) {
             let key = propertyName(for: argument)
             guard let value = arguments[key], !(value is NSNull) else { continue }
 

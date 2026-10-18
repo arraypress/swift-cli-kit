@@ -55,16 +55,26 @@ public struct CLIError: Error, Sendable {
     /// The service the failure relates to, e.g. `"youtube"`.
     public let service: String?
 
+    /// Whether the failed action is safe to repeat, for a command that acts (0.20).
+    ///
+    /// Appears as `"retry"` in the envelope only when set, so every error that never
+    /// mentions it renders exactly as before. A send that timed out says
+    /// ``RetryVerdict/mayHaveCompleted``; one refused before it started says
+    /// ``RetryVerdict/notStarted``.
+    public let retry: RetryVerdict?
+
     public init(
         code: Code,
         message: String,
         hint: String? = nil,
-        service: String? = nil
+        service: String? = nil,
+        retry: RetryVerdict? = nil
     ) {
         self.code = code
         self.message = message
         self.hint = hint
         self.service = service
+        self.retry = retry
     }
 }
 
@@ -131,6 +141,11 @@ public extension CLIError {
     /// The same error with what it's about in front of the message —
     /// `photo.png: contains no image` — keeping its code and hint.
     func prefixed(_ subject: String) -> CLIError {
-        CLIError(code: code, message: "\(subject): \(message)", hint: hint, service: service)
+        CLIError(code: code, message: "\(subject): \(message)", hint: hint, service: service, retry: retry)
+    }
+
+    /// The same error carrying a retry verdict.
+    func with(retry: RetryVerdict?) -> CLIError {
+        CLIError(code: code, message: message, hint: hint, service: service, retry: retry)
     }
 }

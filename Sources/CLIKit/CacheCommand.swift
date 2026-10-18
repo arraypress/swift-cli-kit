@@ -51,7 +51,9 @@ public struct CacheReport: Encodable, TextRenderable, Sendable {
 ///
 /// The cache namespace comes from the tool's own ``ServiceSpec``, so it cannot
 /// drift from the one the tool reads and writes.
-public struct CacheCommand<Root: ParsableCommand & ServiceProviding>: ParsableCommand {
+public struct CacheCommand<Root: ParsableCommand & ServiceProviding>: ParsableCommand, EffectDeclaring {
+
+    public static var commandEffect: CommandEffect { .readOnly }
 
     public static var configuration: CommandConfiguration {
         CommandConfiguration(
@@ -71,7 +73,9 @@ public struct CacheCommand<Root: ParsableCommand & ServiceProviding>: ParsableCo
     public init() {}
 
     /// `<tool> cache info` — where the cache is and how big it has become.
-    public struct Info: ParsableCommand {
+    public struct Info: ParsableCommand, EffectDeclaring {
+
+        public static var commandEffect: CommandEffect { .readOnly }
 
         // Computed, not stored: a nested type inherits its parent's generic
         // parameter, and a generic type cannot hold a static stored property.
@@ -96,7 +100,10 @@ public struct CacheCommand<Root: ParsableCommand & ServiceProviding>: ParsableCo
     }
 
     /// `<tool> cache clear` — throw it away.
-    public struct Clear: ParsableCommand {
+    public struct Clear: ParsableCommand, EffectDeclaring {
+
+        /// Emptying a cache deletes, and doing it twice deletes nothing more.
+        public static var commandEffect: CommandEffect { .acting(destructive: true, idempotent: true) }
 
         public static var configuration: CommandConfiguration {
             CommandConfiguration(

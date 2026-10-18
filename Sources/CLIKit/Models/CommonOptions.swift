@@ -60,6 +60,25 @@ public struct CommonOptions: ParsableArguments {
     @Flag(name: .long, help: "Suppress warnings on stderr.")
     public var quiet: Bool = false
 
+    @Flag(
+        name: .long,
+        help: ArgumentHelp(
+            "Refuse any command that changes something (exit 2) — also CLIKIT_READ_ONLY=1.",
+            discussion: "Checked before the command starts, from what each command declares; describe lists them."
+        )
+    )
+    public var readOnly: Bool = false
+
+    @Flag(
+        name: .long,
+        inversion: .prefixedNo,
+        help: ArgumentHelp(
+            "Mark other people's text as <<untrusted:…>>; on by default when piped.",
+            discussion: "Also CLIKIT_WRAP_UNTRUSTED=0/1. Only fields a payload declares as authored by others are wrapped — never ids, dates or numbers."
+        )
+    )
+    public var wrapUntrusted: Bool?
+
     /// The resolved output format, honouring the explicit flags.
     public var format: OutputFormat {
         namedFormat ?? OutputFormat.resolve(explicit: nil)
@@ -91,7 +110,15 @@ public struct CommonOptions: ParsableArguments {
 
     /// An emitter configured from these options.
     public var emitter: Emitter {
-        Emitter(format: format, fields: fields.isEmpty ? nil : fields, quiet: quiet)
+        Emitter(format: format, fields: fields.isEmpty ? nil : fields, quiet: quiet,
+                untrusted: untrustedPolicy)
+    }
+
+    /// Whether, and how, this run marks other people's text — from
+    /// `--[no-]wrap-untrusted`, then `CLIKIT_WRAP_UNTRUSTED`, then whether
+    /// stdout is a terminal.
+    public var untrustedPolicy: UntrustedPolicy {
+        UntrustedPolicy.resolve(flag: wrapUntrusted)
     }
 
     /// Rejects mutually exclusive format flags.

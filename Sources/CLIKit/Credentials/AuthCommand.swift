@@ -24,7 +24,9 @@ import Foundation
 ///     subcommands: [Movie.self, Search.self, AuthCommand<TMDBMeta>.self]
 /// )
 /// ```
-public struct AuthCommand<Provider: ServiceProviding>: ParsableCommand {
+public struct AuthCommand<Provider: ServiceProviding>: ParsableCommand, EffectDeclaring {
+
+    public static var commandEffect: CommandEffect { .readOnly }
 
     public static var configuration: CommandConfiguration {
         CommandConfiguration(
@@ -45,7 +47,10 @@ public struct AuthCommand<Provider: ServiceProviding>: ParsableCommand {
     // MARK: Login
 
     /// `<tool> auth login` — prompt for and store secrets.
-    public struct Login: ParsableCommand {
+    public struct Login: ParsableCommand, EffectDeclaring {
+
+        /// Writes a credential, replacing any stored one.
+        public static var commandEffect: CommandEffect { .acting(destructive: true, idempotent: true) }
 
         public static var configuration: CommandConfiguration {
             CommandConfiguration(
@@ -141,7 +146,9 @@ public struct AuthCommand<Provider: ServiceProviding>: ParsableCommand {
     ///
     /// Exits `3` when a required credential is missing, so a caller can probe
     /// readiness without parsing the output.
-    public struct Status: ParsableCommand {
+    public struct Status: ParsableCommand, EffectDeclaring {
+
+        public static var commandEffect: CommandEffect { .readOnly }
 
         public static var configuration: CommandConfiguration {
             CommandConfiguration(
@@ -181,7 +188,9 @@ public struct AuthCommand<Provider: ServiceProviding>: ParsableCommand {
     // MARK: Logout
 
     /// `<tool> auth logout` — remove stored secrets.
-    public struct Logout: ParsableCommand {
+    public struct Logout: ParsableCommand, EffectDeclaring {
+
+        public static var commandEffect: CommandEffect { .acting(destructive: true, idempotent: true) }
 
         public static var configuration: CommandConfiguration {
             CommandConfiguration(

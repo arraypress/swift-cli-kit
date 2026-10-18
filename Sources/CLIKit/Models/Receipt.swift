@@ -71,13 +71,26 @@ public struct Change: Codable, Equatable, Hashable, Sendable {
     /// Anything else worth recording, as plain strings so it encodes anywhere.
     public let detail: [String: String]
 
+    /// Whether repeating this change is safe, when the tool can say (0.20).
+    ///
+    /// `nil` — the default, and what every plan carries — is omitted from the JSON, so a
+    /// receipt that never mentions retrying reads byte for byte as it did before, and a plan
+    /// still diffs cleanly against the receipt that follows it.
+    public let retry: RetryVerdict?
+
     public init(_ kind: Kind, subject: String, from: String? = nil, to: String? = nil,
-                detail: [String: String] = [:]) {
+                detail: [String: String] = [:], retry: RetryVerdict? = nil) {
         self.kind = kind
         self.subject = subject
         self.from = from
         self.to = to
         self.detail = detail
+        self.retry = retry
+    }
+
+    /// The same change with a retry verdict.
+    public func with(retry: RetryVerdict?) -> Change {
+        Change(kind, subject: subject, from: from, to: to, detail: detail, retry: retry)
     }
 
     /// A line a person can read.
@@ -136,4 +149,9 @@ public struct Receipt: Codable, Equatable, Sendable {
 
     /// Whether anything actually moved.
     public var isEmpty: Bool { changes.allSatisfy { $0.kind == .unchanged } }
+
+    /// The most cautious retry verdict among the changes, or `nil` when none carries one.
+    /// Doubt outranks certainty: one change that may have completed makes the whole
+    /// receipt "check before retrying".
+    public var retry: RetryVerdict? { RetryVerdict.combined(changes.compactMap(\.retry)) }
 }

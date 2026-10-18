@@ -18,12 +18,15 @@ extension CLIError {
     /// ```json
     /// {"error":{"code":"auth_required","service":"tmdb","message":"…","hint":"…"}}
     /// ```
+    /// with `"retry":"not_started"` (and the other ``RetryVerdict`` values) added only when
+    /// the error carries one.
     var jsonEnvelope: String {
-        ErrorRendering.envelope(code: code.rawValue, message: message, service: service, hint: hint)
+        ErrorRendering.envelope(code: code.rawValue, message: message, service: service, hint: hint,
+                                retry: retry?.rawValue)
     }
 
     /// The human-readable form, used when stderr is a terminal.
     var humanDescription: String {
-        ErrorRendering.human(message: message, hint: hint)
+        ErrorRendering.human(message: message, hint: hint, retry: retry?.summary)
     }
 }
