@@ -105,6 +105,25 @@ echo "==> Re-signing (ad-hoc)"
 codesign --force --sign - "$STAGE/$TOOL"
 codesign --verify --strict "$STAGE/$TOOL"
 
+# A tool that calls an Apple service tied to its App ID (ShazamKit's catalogue
+# answers only a binary signed by a team whose App ID has the service) declares
+# Scripts/signing.env: SIGN_IDENTITY (e.g. "Developer ID Application") and
+# BUNDLE_ID, the CFBundleIdentifier its Package.swift embeds as __info_plist.
+# Everything else stays ad-hoc: no developer account needed to release it.
+if [ -f "$ROOT/Scripts/signing.env" ]; then
+    # shellcheck source=/dev/null
+    source "$ROOT/Scripts/signing.env"
+    : "${SIGN_IDENTITY:?Scripts/signing.env must set SIGN_IDENTITY}" "${BUNDLE_ID:?Scripts/signing.env must set BUNDLE_ID}"
+    echo "==> Signing with $SIGN_IDENTITY ($BUNDLE_ID)"
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$STAGE/$TOOL"
+    codesign --verify --strict "$STAGE/$TOOL"
+    # The service keys on the identifier inside the signature: a binary built
+    # without the embedded Info.plist signs as its file name and is refused.
+    SIGNED_ID="$(codesign -dv "$STAGE/$TOOL" 2>&1 | sed -n 's/^Identifier=//p')"
+    [ "$SIGNED_ID" = "$BUNDLE_ID" ] || { echo "✗ signed as '$SIGNED_ID', expected $BUNDLE_ID — is Info.plist embedded?" >&2; exit 1; }
+    codesign -dv "$STAGE/$TOOL" 2>&1 | grep -q '^TeamIdentifier=[A-Z0-9]\{10\}$' || { echo "✗ no team in the signature" >&2; exit 1; }
+fi
+
 # ── Assertions ───────────────────────────────────────────────────────────────
 # Each of these has a matching way to ship something wrong silently.
 
