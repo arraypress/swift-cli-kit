@@ -431,4 +431,102 @@ final class MCPServerTests: XCTestCase {
             XCTAssertNil(reply["error"], "advertised tool \(name) was rejected")
         }
     }
+
+    // MARK: - Channel
+
+    func testAnOrdinaryServerDeclaresNoChannel() throws {
+        // The capability is what makes Claude Code listen for pushed events;
+        // a plain `mcp` must not claim to be something it is not.
+        let (server, _) = self.server()
+        let reply = try XCTUnwrap(send(#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#, to: server))
+        let result = try XCTUnwrap(reply["result"] as? [String: Any])
+        XCTAssertNil((result["capabilities"] as? [String: Any])?["experimental"])
+        XCTAssertNil(result["instructions"])
+    }
+
+    func testAChannelDeclaresItselfAndItsInstructions() throws {
+        let server = MCPServer(manifest: manifest(), channelInstructions: "Reply with send.") { _ in
+            .init(stdout: "", stderr: "", exitCode: 0)
+        }
+        let reply = try XCTUnwrap(send(#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#, to: server))
+        let result = try XCTUnwrap(reply["result"] as? [String: Any])
+        let capabilities = try XCTUnwrap(result["capabilities"] as? [String: Any])
+        let experimental = try XCTUnwrap(capabilities["experimental"] as? [String: Any])
+
+        XCTAssertNotNil(experimental["claude/channel"])
+        XCTAssertNotNil(capabilities["tools"], "a channel still offers its tools — replies go through them")
+        XCTAssertEqual(result["instructions"] as? String, "Reply with send.")
+    }
+
+    func testAPermissionChannelDeclaresThatToo() throws {
+        let server = MCPServer(manifest: manifest(), channelInstructions: "x",
+                               channelCapabilities: ["claude/channel/permission"]) { _ in
+            .init(stdout: "", stderr: "", exitCode: 0)
+        }
+        let reply = try XCTUnwrap(send(#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#, to: server))
+        let experimental = try XCTUnwrap(
+            ((reply["result"] as? [String: Any])?["capabilities"] as? [String: Any])?["experimental"] as? [String: Any]
+        )
+        XCTAssertNotNil(experimental["claude/channel"])
+        XCTAssertNotNil(experimental["claude/channel/permission"])
+    }
+
+    func testAnEventBecomesAChannelNotification() throws {
+        let event = MCPChannelEvent(content: "hello", meta: ["chat_id": "any;-;+44", "ts": "2026-10-25"])
+        let data = try XCTUnwrap(MCPServer.notification(for: .event(event)))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+
+        XCTAssertEqual(object["method"] as? String, "notifications/claude/channel")
+        XCTAssertNil(object["id"], "a notification carries no id")
+        XCTAssertEqual(params["content"] as? String, "hello")
+        XCTAssertEqual(params["meta"] as? [String: String], ["chat_id": "any;-;+44", "ts": "2026-10-25"])
+    }
+
+    func testMetaKeysAreMadeIdentifiers() throws {
+        // Claude Code drops any key that is not letters, digits and
+        // underscores — silently, so the attribute just never arrives.
+        let event = MCPChannelEvent(content: "x", meta: ["image-path": "/a.png", "ok_1": "y", "": "z"])
+        XCTAssertEqual(event.sanitisedMeta, ["image_path": "/a.png", "ok_1": "y"])
+    }
+
+    func testAnEventWithoutMetaSendsNone() throws {
+        let data = try XCTUnwrap(MCPServer.notification(for: .event(MCPChannelEvent(content: "x"))))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil((object["params"] as? [String: Any])?["meta"])
+    }
+
+    func testAnAnswerToAnApprovalPromptIsItsOwnNotification() throws {
+        let data = try XCTUnwrap(MCPServer.notification(for: .permission(requestID: "abcde", allow: false)))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["method"] as? String, "notifications/claude/channel/permission")
+        XCTAssertEqual(object["params"] as? [String: String], ["request_id": "abcde", "behavior": "deny"])
+    }
+
+    func testOnlyNotificationsAreHandedToTheChannel() throws {
+        let incoming = try XCTUnwrap(MCPServer.incomingNotification(
+            #"{"jsonrpc":"2.0","method":"notifications/claude/channel/permission_request","params":{"request_id":"abcde"}}"#
+        ))
+        XCTAssertEqual(incoming.method, "notifications/claude/channel/permission_request")
+        XCTAssertEqual(incoming.params["request_id"] as? String, "abcde")
+        // A request carries an id and is answered, never handed over.
+        XCTAssertNil(MCPServer.incomingNotification(#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#))
+        XCTAssertNil(MCPServer.incomingNotification("not json"))
+    }
+
+    func testALocalOnlyCommandIsNeitherListedNorCallable() throws {
+        // Who may reach a channel is the terminal's decision: offered as a
+        // tool, it is one persuasive message away from a stranger's access.
+        let server = MCPServer(manifest: manifest(), localOnly: [["search"]]) { _ in
+            .init(stdout: "", stderr: "", exitCode: 0)
+        }
+        let names = try tools(from: server).compactMap { $0["name"] as? String }
+        XCTAssertFalse(names.contains("yt-fetch_search"))
+        XCTAssertTrue(names.contains("yt-fetch_batch"))
+        let reply = try XCTUnwrap(send(
+            #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"yt-fetch_search","arguments":{"query":"x"}}}"#,
+            to: server
+        ))
+        XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? Int, -32602)
+    }
 }

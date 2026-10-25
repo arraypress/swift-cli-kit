@@ -67,11 +67,27 @@ public struct MCPServer: Sendable {
     /// to `tools/call`; each subprocess also refuses them, as a backstop.
     public let readOnly: Bool
 
+    /// When serving as a channel (`mcp --channel`), what the model is told on
+    /// connecting; `nil` for an ordinary server, which declares no channel.
+    public let channelInstructions: String?
+
+    /// A channel's capabilities beyond `claude/channel` — as
+    /// `claude/channel/permission`.
+    public let channelCapabilities: [String]
+
+    /// Commands never offered, by path — those declared ``LocalOnlyCommand``.
+    public let localOnly: Set<[String]>
+
     // MARK: Initialisation
 
-    public init(manifest: Manifest, readOnly: Bool = false, run: @escaping Runner) {
+    public init(manifest: Manifest, readOnly: Bool = false, channelInstructions: String? = nil,
+                channelCapabilities: [String] = [], localOnly: Set<[String]> = [],
+                run: @escaping Runner) {
         self.manifest = manifest
         self.readOnly = readOnly
+        self.channelInstructions = channelInstructions
+        self.channelCapabilities = channelCapabilities
+        self.localOnly = localOnly
         self.run = run
     }
 
@@ -106,11 +122,13 @@ public struct MCPServer: Sendable {
             let version = requested.flatMap { Self.protocolVersions.contains($0) ? $0 : nil }
                 ?? Self.protocolVersion
 
-            return encode(result: [
+            var result: [String: Any] = [
                 "protocolVersion": version,
-                "capabilities": ["tools": [String: Any]()],
+                "capabilities": capabilities,
                 "serverInfo": ["name": manifest.tool, "version": manifest.version],
-            ], id: id)
+            ]
+            if let channelInstructions { result["instructions"] = channelInstructions }
+            return encode(result: result, id: id)
 
         case "ping":
             return encode(result: [String: Any](), id: id)
@@ -127,6 +145,19 @@ public struct MCPServer: Sendable {
         }
     }
 
+    /// What this server declares: tools always; a channel's
+    /// `experimental.claude/channel` only when serving as one, since its
+    /// presence is what makes Claude Code listen for pushed events.
+    private var capabilities: [String: Any] {
+        var capabilities: [String: Any] = ["tools": [String: Any]()]
+        if channelInstructions != nil {
+            var experimental: [String: Any] = ["claude/channel": [String: Any]()]
+            for extra in channelCapabilities { experimental[extra] = [String: Any]() }
+            capabilities["experimental"] = experimental
+        }
+        return capabilities
+    }
+
     // MARK: Tool Definitions
 
     /// The commands offered as tools: every invocable command except the
@@ -136,6 +167,7 @@ public struct MCPServer: Sendable {
             // The root command dispatches to subcommands and does nothing alone.
             guard let first = command.path.first else { return false }
             if readOnly, command.effect?.isReadOnly != true { return false }
+            if localOnly.contains(command.path) { return false }
             return !Self.unexposedCommands.contains(first)
         }
     }
@@ -372,21 +404,85 @@ public struct MCPServer: Sendable {
         try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes])
     }
 
+    /// A channel's output as the notification Claude Code listens for.
+    public static func notification(for output: MCPChannelOutput) -> Data? {
+        let method: String
+        var params: [String: Any]
+        switch output {
+        case .event(let event):
+            method = "notifications/claude/channel"
+            params = ["content": event.content]
+            let meta = event.sanitisedMeta
+            if !meta.isEmpty { params["meta"] = meta }
+        case .permission(let requestID, let allow):
+            method = "notifications/claude/channel/permission"
+            params = ["request_id": requestID, "behavior": allow ? "allow" : "deny"]
+        }
+        return try? JSONSerialization.data(withJSONObject: [
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        ], options: [.withoutEscapingSlashes])
+    }
+
     // MARK: Transport
+
+    /// One writer for stdout. Replies and a channel's notifications come from
+    /// different threads, and two lines written at once can interleave mid-
+    /// line past the pipe's atomic size — one corrupt line ends the session.
+    private static let output = NSLock()
+
+    /// Writes one protocol line.
+    static func writeLine(_ data: Data) {
+        output.lock()
+        defer { output.unlock() }
+        // Through Terminal rather than FileHandle: a client that has gone
+        // away closes the pipe, and that ends the server cleanly instead of
+        // raising an uncatchable exception mid-reply.
+        Terminal.write(data + Data("\n".utf8))
+    }
+
+    /// Sends a channel's output to the client.
+    public func emit(_ output: MCPChannelOutput) {
+        guard let line = Self.notification(for: output) else { return }
+        Self.writeLine(line)
+    }
+
+    /// The method and params of a line that is a notification — no id —
+    /// or `nil` for a request, a reply, or something unreadable.
+    static func incomingNotification(_ line: String) -> (method: String, params: [String: Any])? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+              object["id"] == nil, let method = object["method"] as? String else { return nil }
+        return (method, object["params"] as? [String: Any] ?? [:])
+    }
 
     /// Reads newline-delimited JSON-RPC from stdin until EOF, replying on stdout.
     ///
     /// Nothing else may write to stdout while this runs — it is the protocol
     /// channel. Diagnostics belong on stderr.
-    public func serve() {
+    ///
+    /// - Parameters:
+    ///   - onReady: Called once, when the client finishes the handshake —
+    ///     where a channel starts, since it may not speak before.
+    ///   - onNotification: Every other notification the client sends.
+    public func serve(onReady: (() -> Void)? = nil,
+                      onNotification: ((String, [String: Any]) -> Void)? = nil) {
+        var ready = onReady
         while let line = readLine(strippingNewline: true) {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            if ready != nil || onNotification != nil, let (method, params) = Self.incomingNotification(line) {
+                if method == "notifications/initialized" {
+                    if let start = ready {
+                        ready = nil
+                        start()
+                    }
+                } else {
+                    onNotification?(method, params)
+                }
+                continue
+            }
             guard let reply = handle(Data(line.utf8)) else { continue }
-
-            // Through Terminal rather than FileHandle: a client that has gone
-            // away closes the pipe, and that ends the server cleanly instead
-            // of raising an uncatchable exception mid-reply.
-            Terminal.write(reply + Data("\n".utf8))
+            Self.writeLine(reply)
         }
     }
 }
