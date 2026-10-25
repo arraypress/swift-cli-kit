@@ -228,6 +228,55 @@ One caveat worth weighing before wiring up two dozen of these: MCP tool
 definitions occupy the model's context permanently, whereas a CLI costs nothing
 until invoked. Register the servers you use constantly; leave the rest as CLIs.
 
+### `<tool> mcp --channel` (0.21)
+
+A tool that hears about things — a message arriving, a file landing — can push
+them into a running Claude Code session as a
+[channel](https://code.claude.com/docs/en/channels): the same server, its tools
+unchanged, plus events. Conform the root to `MCPChannelProviding` and return
+an `MCPChannel`:
+
+```swift
+extension IMessageCLI: MCPChannelProviding {
+    static func makeChannel() throws -> any MCPChannel { MessagesChannel() }
+}
+
+struct MessagesChannel: MCPChannel {
+    var instructions: String { "Messages arrive as <channel …>. Reply with the send tool." }
+    func run(emit: @escaping @Sendable (MCPChannelOutput) -> Void) async throws {
+        // poll, then: emit(.event(MCPChannelEvent(content: text, meta: ["chat_id": guid])))
+    }
+}
+```
+
+- **It starts after the handshake.** `run` is called once the client sends
+  `notifications/initialized` — an event ahead of the `initialize` reply is a
+  protocol violation.
+- **`meta` keys must be identifiers.** Claude Code drops anything else
+  silently; `MCPChannelEvent.sanitisedMeta` turns `image-path` into
+  `image_path` rather than losing it.
+- **`willRun(call:)` sees every tool call before it runs** — where a channel
+  whose replies come back as events (a message to yourself) learns what it is
+  about to send. Before, not after: a send that confirms delivery returned
+  three seconds after its echo arrived.
+- **Approvals by relay.** List `claude/channel/permission` in `capabilities`
+  and `receive(notification:params:)` is handed each tool-approval prompt;
+  `emit(.permission(requestID:allow:))` answers it.
+- **Writes to stdout are serialised**, so an event never lands inside a tool
+  result.
+
+A custom channel loads with `claude --dangerously-load-development-channels
+plugin:<name>@<marketplace>` until it is on Anthropic's allowlist.
+
+### `LocalOnlyCommand` (0.21)
+
+Some commands are the keyboard's alone — who may message a channel, which keys
+a tool trusts. Offered to an agent, they are one well-worded message away from
+granting a stranger access because the stranger asked. Conform a command to
+`LocalOnlyCommand` and `mcp` leaves it, and everything beneath it, out of
+`tools/list` and refuses it in `tools/call`. It stays in `--help` and
+`describe`.
+
 ## Safety for agents (0.20)
 
 Four things a tool driven by an agent needs, once, in the kit. The ideas come
