@@ -548,6 +548,29 @@ try common.emitter.emitAll(payloads)  // array, or NDJSON lines
 
 Diagnostics, warnings and prompts all go to **stderr**, so piping stdout into a parser never has to strip chatter.
 
+### Cards: `--card` (0.22)
+
+A result that can be drawn as a picture says so: with `--card` it prints a **card spec** — the JSON the
+[`card`](https://github.com/arraypress/swift-card-cli) tool and [CardKit](https://github.com/arraypress/swift-card-kit)
+draw — instead of the result, so an agent pipes `screentime week --card | card -o week.png` rather than re-typing the
+numbers into a card by hand, which is where they get copied wrong.
+
+```swift
+import CardKit   // the tool's dependency, not CLIKit's
+
+extension WeekPayload: CardRenderable {
+    func cardJSON() throws -> Data { try JSONEncoder().encode(Card(eyebrow: "Screen Time · this week", blocks: [...])) }
+}
+extension DeviceRow: CardCollectionRenderable {          // a list that makes one card
+    static func cardJSON(forAll values: [Any]) throws -> Data { ... }
+}
+```
+
+`emit` and both `emitAll`s honour it; the spec is written as given (drawn, not read, so it is never fenced or
+field-filtered). A result with no card exits 2 with `this command has no card`; `--card` beside a format flag or
+`--fields` is refused. CLIKit itself knows only "some JSON", so it stays free of SwiftUI and a tool without cards
+pays nothing.
+
 ### Warnings, bare values and Ctrl-C
 
 - `common.warn("…")` writes `warning: …` to stderr and stays silent under

@@ -41,6 +41,15 @@ public struct CommonOptions: ParsableArguments {
     @Flag(name: .long, help: "Emit an HTML table.")
     public var html: Bool = false
 
+    @Flag(
+        name: .long,
+        help: ArgumentHelp(
+            "Print this result as a card spec for `card` (JSON) instead of the result.",
+            discussion: "Pipe it on: … --card | card -o x.png. A command without a card exits 2."
+        )
+    )
+    public var card: Bool = false
+
     @Option(
         name: .long,
         parsing: .upToNextOption,
@@ -111,7 +120,7 @@ public struct CommonOptions: ParsableArguments {
     /// An emitter configured from these options.
     public var emitter: Emitter {
         Emitter(format: format, fields: fields.isEmpty ? nil : fields, quiet: quiet,
-                untrusted: untrustedPolicy)
+                untrusted: untrustedPolicy, card: card)
     }
 
     /// Whether, and how, this run marks other people's text — from
@@ -128,6 +137,10 @@ public struct CommonOptions: ParsableArguments {
             throw ValidationError(
                 "Pass at most one of --json, --text, --ndjson, --csv, --tsv, --markdown, --html."
             )
+        }
+        // A card is its own JSON shape: a format or a field selection beside it would be silently ignored.
+        if card, chosen > 0 || !fields.isEmpty {
+            throw ValidationError("--card prints a card spec; leave out the format flags and --fields.")
         }
     }
 }

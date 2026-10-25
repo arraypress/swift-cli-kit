@@ -32,18 +32,23 @@ public struct Emitter: Sendable {
     /// in `<<untrusted:…>>` markers — see ``UntrustedContent``.
     public let untrusted: UntrustedPolicy
 
+    /// Whether to print the result's card spec (`--card`) instead of the result — see ``CardRenderable``.
+    public let card: Bool
+
     public init(
         format: OutputFormat,
         fields: [String]? = nil,
         pretty: Bool? = nil,
         quiet: Bool = false,
-        untrusted: UntrustedPolicy? = nil
+        untrusted: UntrustedPolicy? = nil,
+        card: Bool = false
     ) {
         self.format = format
         self.fields = fields.map(Self.normalise)
         self.pretty = pretty ?? Terminal.stdoutIsTTY
         self.quiet = quiet
         self.untrusted = untrusted ?? .resolve()
+        self.card = card
     }
 
     /// Splits comma-joined field names and trims each one.
@@ -105,6 +110,10 @@ public struct Emitter: Sendable {
     /// - Parameter value: The payload. Rendered as text when the resolved
     ///   format is ``OutputFormat/text``, otherwise as JSON.
     public func emit<T: Encodable & TextRenderable>(_ value: T) throws {
+        if card {
+            guard let renderable = value as? CardRenderable else { throw Self.noCard }
+            return Self.writeCard(try renderable.cardJSON())
+        }
         switch format {
         case .text:
             Terminal.writeLine(rendering { value.renderText() })
@@ -125,6 +134,7 @@ public struct Emitter: Sendable {
     /// In ``OutputFormat/ndjson`` each element becomes its own line, so a caller
     /// can process them as they arrive instead of waiting for the whole batch.
     public func emitAll<T: Encodable & TextRenderable>(_ values: [T]) throws {
+        if card { return try emitCard(values) }
         switch format {
         case .text:
             for value in values { Terminal.writeLine(rendering { value.renderText() }) }
@@ -149,6 +159,7 @@ public struct Emitter: Sendable {
     /// behaves identically, so adopting the protocol changes only what a person
     /// sees.
     public func emitAll<T: Encodable & TableRenderable>(_ values: [T]) throws {
+        if card { return try emitCard(values) }
         guard format == .text else {
             try emitAll(values, asNonTable: ())
             return
@@ -227,6 +238,27 @@ public struct Emitter: Sendable {
             let data = try encoded(values, as: T.self, with: encoder)
             Terminal.writeLine(String(decoding: applyFieldFilter(to: data), as: UTF8.self))
         }
+    }
+
+    // MARK: Cards
+
+    /// The refusal when `--card` meets a result with no card.
+    static var noCard: CLIError { .usage("this command has no card") }
+
+    /// A list's card: the element type's collection card, or the card of a single element on its own.
+    private func emitCard<T>(_ values: [T]) throws {
+        if let collection = T.self as? CardCollectionRenderable.Type {
+            return Self.writeCard(try collection.cardJSON(forAll: values))
+        }
+        if values.count == 1, let one = values[0] as? CardRenderable {
+            return Self.writeCard(try one.cardJSON())
+        }
+        throw Self.noCard
+    }
+
+    /// A card spec is written as given, unwrapped: it is drawn, not read, and `card` takes it whole.
+    private static func writeCard(_ data: Data) {
+        Terminal.writeLine(String(decoding: data, as: UTF8.self))
     }
 
     // MARK: Field Selection
