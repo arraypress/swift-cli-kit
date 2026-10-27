@@ -648,6 +648,28 @@ func validate() throws {
 the pure rule underneath (the message, or `nil`); pass `fileExtensions` to
 use a tool's own list instead of `OutFolder.fileExtensions`.
 
+### One file name for several results: `OutFile` (0.24)
+
+The other half: `-o short.mp4` on a run that writes several files used to
+write every one of them to `short.mp4`, each over the last, and exit 0. Once
+`execute()` knows how many files the run will write, and before it writes the
+first, call `OutFile.check`; a file name given more than one result is
+refused with exit 2:
+
+```swift
+try OutFile.check(output, results: videos.count)                    // -o is a file or a folder
+try OutFile.check(output, results: pages, option: "--output", folderOption: "--out")
+```
+
+```
+-o short.mp4 names one file, but this run writes 3: give -o a folder (-o short) and each file lands inside it.
+```
+
+One result with a file name passes, as does any folder. A name is a file name
+by the same test as `OutFolder` (`OutFile.namesAFile`): a known file
+extension, and no folder of that name. `OutFile.problem(_:results:isFolder:…)`
+is the pure rule underneath.
+
 ### Owner-only files
 
 ```swift
