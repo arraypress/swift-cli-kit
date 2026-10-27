@@ -13,7 +13,7 @@ Built for tools whose main caller is an **agent or a script**, not a person. Tha
 - ✂️ **Field selection** — `--fields` narrows any payload, keeping responses cheap
 - 💾 **TTL disk cache** — repeat lookups served locally, off the failure path entirely
 - 🛡️ **Agent safety** — other people's text fenced in random-token markers, `--read-only` from declared effects, MCP annotations, retry verdicts, a timed osascript runner
-- 📁 **File plumbing** — tilde expansion, input gathering, collision-proof output names and owner-only files, shared instead of reinvented
+- 📁 **File plumbing** — tilde expansion, input gathering, collision-proof output names, folder options that refuse file names, and owner-only files, shared instead of reinvented
 - 🍎 **Swift 6.2** · Apple silicon · macOS 14+ · strict concurrency
 
 ## Installation
@@ -623,6 +623,30 @@ expands the tilde, and each fails as a `CLIError` with the right exit code — a
 missing input is `1` (not found), an unwritable output is `5` — rather than a
 bare Foundation message. `Files.read("-")` reads standard input, the family's
 spelling for "what is piped in".
+
+### A folder option given a file name: `OutFolder` (0.23)
+
+`--out clip.mp4` on an option that takes a folder used to make a folder called
+`clip.mp4`, put the result inside, and exit 0. Call `OutFolder.check` from
+`validate()` and a name ending in a file extension (video, audio, image,
+document, subtitle, data) is refused with exit 2 unless such a folder really
+exists:
+
+```swift
+func validate() throws {
+    try OutFolder.check(out)                                   // --out, with -o naming one file
+    try OutFolder.check(output, option: "-o", fileOption: nil) // -o is only ever a folder
+    try OutFolder.check(output, option: "-o", alsoNames: "srt") // a folder, or the one .srt
+}
+```
+
+```
+--out is a folder for the results, and clip.mp4 is a file name: to name the file, use -o clip.mp4; with several inputs, give --out a folder name.
+```
+
+`OutFolder.problem(_:isFolder:option:fileOption:alsoNames:fileExtensions:)` is
+the pure rule underneath (the message, or `nil`); pass `fileExtensions` to
+use a tool's own list instead of `OutFolder.fileExtensions`.
 
 ### Owner-only files
 
